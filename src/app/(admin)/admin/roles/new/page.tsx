@@ -53,7 +53,11 @@ export default function NewRolePage() {
 
   return (
     <ContentContainer>
-      <PageHeader title="Add role" description="Define a name and the permission matrix this role grants." />
+      <PageHeader
+        title="Add role"
+        description="Define a name and the permission matrix this role grants."
+        backHref="/admin/roles"
+      />
       {globalError && <div className="mb-4"><Alert variant="danger">{globalError}</Alert></div>}
       <Form form={form} onSubmit={onSubmit} className="max-w-2xl">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

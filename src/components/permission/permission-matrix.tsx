@@ -18,7 +18,7 @@ export type PermissionMatrixProps = {
 export function PermissionMatrix({ resources, value, onChange, disabled }: PermissionMatrixProps) {
   function toggle(resourceKey: string, action: PermissionAction) {
     if (disabled) return;
-    const current = value[resourceKey] ?? { view: false, add: false, edit: false, delete: false };
+    const current = value[resourceKey] ?? { view: false, add: false, edit: false, delete: false, comment: false };
     onChange({
       ...value,
       [resourceKey]: { ...current, [action]: !current[action] },
@@ -40,7 +40,7 @@ export function PermissionMatrix({ resources, value, onChange, disabled }: Permi
         </thead>
         <tbody>
           {resources.map((resource) => {
-            const perms = value[resource.key] ?? { view: false, add: false, edit: false, delete: false };
+            const perms = value[resource.key] ?? { view: false, add: false, edit: false, delete: false, comment: false };
             return (
               <tr key={resource.key} className="border-b border-line last:border-0">
                 <td className="px-4 py-2.5 font-medium text-ink">{resource.label}</td>

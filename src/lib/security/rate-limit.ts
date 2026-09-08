@@ -54,6 +54,7 @@ const limiters = {
   register: new InMemoryRateLimiter(5, 60_000),
   refresh: new InMemoryRateLimiter(30, 60_000),
   passwordReset: new InMemoryRateLimiter(5, 60_000),
+  impersonate: new InMemoryRateLimiter(20, 60_000), // requirement #21 - Super Admin "Login as User"
 };
 
 export function getRateLimiter(action: keyof typeof limiters): RateLimiter {

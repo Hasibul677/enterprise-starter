@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { resolveCurrentAccess } from "@/lib/auth/current-user";
-import { requirePermission, requireSuperAdmin } from "@/lib/permissions/guard";
+import { requirePermission, requireSuperAdmin, requireAdminAreaAccess } from "@/lib/permissions/guard";
 import { CORE_RESOURCES } from "@/lib/permissions/constants";
 import { roleCreateSchema } from "@/features/roles/schemas/role-create.schema";
 import { createRole, listRoles } from "@/services/role.service";
@@ -11,7 +11,10 @@ export async function GET() {
   try {
     await connectToDatabase();
     const access = await resolveCurrentAccess();
-    requireSuperAdmin(access);
+    // Read-only role/permission overview can be shown to a permitted ADMIN
+    // (requirement #17 "role/permission overview"); mutating a role
+    // DEFINITION stays Super Admin-only below - see POST.
+    requireAdminAreaAccess(access);
     requirePermission(access, CORE_RESOURCES.ROLES, "view");
 
     const roles = await listRoles();

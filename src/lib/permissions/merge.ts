@@ -49,3 +49,22 @@ export function hasPermission(
 ): boolean {
   return Boolean(permissions[resource]?.[action]);
 }
+
+/** A single `resource`/`action` pair to check with hasAnyPermission()/hasAllPermissions(). */
+export type PermissionCheck = { resource: string; action: keyof ResourcePermissions };
+
+/**
+ * Requirement #5's reusable permission-checking system, alongside
+ * hasPermission() above - OR semantics across multiple resource/action
+ * pairs, for the (currently rare, but real) case where a page or action
+ * should unlock on ANY of several grants rather than exactly one. Prefer
+ * this over hand-rolling `hasPermission(...) || hasPermission(...)` inline.
+ */
+export function hasAnyPermission(permissions: PermissionMap, checks: PermissionCheck[]): boolean {
+  return checks.some((c) => hasPermission(permissions, c.resource, c.action));
+}
+
+/** AND semantics across multiple resource/action pairs - see hasAnyPermission(). */
+export function hasAllPermissions(permissions: PermissionMap, checks: PermissionCheck[]): boolean {
+  return checks.every((c) => hasPermission(permissions, c.resource, c.action));
+}

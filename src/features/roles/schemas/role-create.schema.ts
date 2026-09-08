@@ -5,6 +5,7 @@ const permissionActionsSchema = z.object({
   add: z.boolean().default(false),
   edit: z.boolean().default(false),
   delete: z.boolean().default(false),
+  comment: z.boolean().default(false),
 });
 
 export const roleCreateSchema = z.object({

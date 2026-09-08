@@ -2,16 +2,31 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { Plus, GitBranch } from "lucide-react";
+import { Plus, GitBranch, Pencil } from "lucide-react";
 import { ContentContainer } from "@/components/layout/content-container";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumn } from "@/components/data-table/data-table";
 import { PermissionGuard } from "@/components/permission/permission-guard";
 import { DeleteButton } from "@/components/ui/delete-button";
+import { IconLink } from "@/components/ui/icon-link";
 import { apiClient, ApiClientError } from "@/lib/api-client/api-client";
+import { MENU_SCOPES } from "@/lib/permissions/constants";
 
-type MenuRow = { _id: string; name: string; level: number; route?: string | null; sortOrder: number; isActive: boolean };
+type MenuRow = {
+  _id: string;
+  name: string;
+  level: number;
+  route?: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  scope?: string | null;
+};
+
+const SCOPE_LABELS: Record<string, string> = {
+  [MENU_SCOPES.SUPER_ADMIN_ADMIN]: "Super Admin / Admin",
+  [MENU_SCOPES.NORMAL_ADMIN_MODERATOR]: "Normal Admin / Moderator",
+};
 
 export default function MenusPage() {
   const [rows, setRows] = useState<MenuRow[]>([]);
@@ -42,6 +57,16 @@ export default function MenusPage() {
     { key: "name", header: "Name", render: (r) => "—".repeat(r.level - 1) + " " + r.name },
     { key: "level", header: "Level", render: (r) => r.level },
     { key: "route", header: "Route", render: (r) => r.route ?? "—" },
+    {
+      key: "scope",
+      header: "Scope",
+      render: (r) =>
+        r.scope ? (
+          <span className="rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">{SCOPE_LABELS[r.scope] ?? r.scope}</span>
+        ) : (
+          <span className="text-xs text-ink-soft">—</span>
+        ),
+    },
     { key: "sortOrder", header: "Sort", render: (r) => r.sortOrder },
     {
       key: "status",
@@ -84,23 +109,22 @@ export default function MenusPage() {
         onRetry={load}
         emptyTitle="No menu items yet"
         rowActions={(r) => (
-          <div className="flex items-center justify-end gap-3">
+          <div className="flex items-center justify-end gap-1">
             <PermissionGuard resource="menus" action="edit">
-              <Link href={`/menus/${r._id}/edit`} className="text-sm font-medium text-accent">
-                Edit
-              </Link>
+              <IconLink href={`/admin/menus/${r._id}/edit`} label="Edit">
+                <Pencil className="h-4 w-4" />
+              </IconLink>
             </PermissionGuard>
             {r.isActive && (
               <PermissionGuard resource="menus" action="delete">
                 <DeleteButton
                   itemLabel={r.name}
+                  actionLabel="Deactivate"
                   onDelete={async () => {
                     await apiClient.delete(`/api/menus/${r._id}`);
                     await load();
                   }}
-                >
-                  Deactivate
-                </DeleteButton>
+                />
               </PermissionGuard>
             )}
           </div>

@@ -7,10 +7,11 @@ import { ConfirmDialog } from "@/components/modal/confirm-dialog";
 export type ConfirmButtonProps = Omit<ButtonProps, "onClick"> & {
   confirmTitle: string;
   confirmDescription?: string;
+  confirmLabel?: string;
   onConfirm: () => Promise<void> | void;
 };
 
-export function ConfirmButton({ confirmTitle, confirmDescription, onConfirm, children, ...props }: ConfirmButtonProps) {
+export function ConfirmButton({ confirmTitle, confirmDescription, confirmLabel = "Confirm", onConfirm, children, ...props }: ConfirmButtonProps) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -24,7 +25,7 @@ export function ConfirmButton({ confirmTitle, confirmDescription, onConfirm, chi
         title={confirmTitle}
         description={confirmDescription}
         variant="primary"
-        confirmLabel="Confirm"
+        confirmLabel={confirmLabel}
       />
     </>
   );

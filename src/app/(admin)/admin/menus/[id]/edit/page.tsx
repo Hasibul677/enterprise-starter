@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Form } from "@/components/forms/form";
 import { FormField } from "@/components/forms/form-field";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Button } from "@/components/ui/button";
@@ -18,8 +19,23 @@ import { Loading } from "@/components/feedback/loading";
 import { applyServerErrors } from "@/components/forms/set-server-errors";
 import { apiClient, ApiClientError } from "@/lib/api-client/api-client";
 import { Controller } from "react-hook-form";
+import { MENU_SCOPES } from "@/lib/permissions/constants";
 
-type MenuDetail = { _id: string; name: string; label: string; route?: string | null; sortOrder: number; isActive: boolean; isVisible: boolean };
+const SCOPE_OPTIONS = [
+  { value: MENU_SCOPES.SUPER_ADMIN_ADMIN, label: "Super Admin / Admin" },
+  { value: MENU_SCOPES.NORMAL_ADMIN_MODERATOR, label: "Normal Admin / Moderator" },
+];
+
+type MenuDetail = {
+  _id: string;
+  name: string;
+  label: string;
+  route?: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  isVisible: boolean;
+  scope?: string | null;
+};
 
 export default function EditMenuPage() {
   const { id } = useParams<{ id: string }>();
@@ -40,6 +56,7 @@ export default function EditMenuPage() {
           sortOrder: menu.sortOrder,
           isActive: menu.isActive,
           isVisible: menu.isVisible,
+          scope: (menu.scope ?? undefined) as MenuUpdateInput["scope"],
         });
       })
       .finally(() => setLoading(false));
@@ -65,7 +82,7 @@ export default function EditMenuPage() {
 
   return (
     <ContentContainer>
-      <PageHeader title="Edit menu item" />
+      <PageHeader title="Edit menu item" backHref="/admin/menus" />
       {globalError && <div className="mb-4"><Alert variant="danger">{globalError}</Alert></div>}
       <Form form={form} onSubmit={onSubmit} className="max-w-lg">
         <FormField<MenuUpdateInput> name="name" label="Name" render={(f) => (
@@ -76,6 +93,14 @@ export default function EditMenuPage() {
         )} />
         <FormField<MenuUpdateInput> name="route" label="Route" render={(f) => (
           <Input id={f.id} value={(f.value as string) ?? ""} onChange={(e) => f.onChange(e.target.value || null)} onBlur={f.onBlur} invalid={f.invalid} />
+        )} />
+        <FormField<MenuUpdateInput> name="scope" label="Menu Scope" render={(f) => (
+          <Select
+            id={f.id}
+            value={(f.value as string) ?? ""}
+            onChange={(e) => f.onChange(e.target.value)}
+            options={SCOPE_OPTIONS}
+          />
         )} />
         <FormField<MenuUpdateInput> name="sortOrder" label="Sort order" render={(f) => (
           <Input id={f.id} type="number" value={f.value as number} onChange={(e) => f.onChange(Number(e.target.value))} onBlur={f.onBlur} invalid={f.invalid} />

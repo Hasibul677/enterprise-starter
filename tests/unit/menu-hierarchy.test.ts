@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildEffectiveMenuTree } from "@/lib/menu/menu-service";
+import { MENU_SCOPES, ROLE_SLUGS } from "@/lib/permissions/constants";
 import type { MenuDocument } from "@/models/menu.model";
 
 // Minimal mock-menu builder for these tests only - intentionally loosely
@@ -17,6 +18,7 @@ function menu(overrides: Record<string, unknown> & { _id: string }): MenuDocumen
     isActive: true,
     isVisible: true,
     resourceKey: null,
+    scope: null,
     createdBy: null,
     updatedBy: null,
     ...overrides,
@@ -32,7 +34,7 @@ describe("effective menu tree (requirement #15)", () => {
 
   it("shows a leaf menu when the user has view permission on its resourceKey", () => {
     const all = [menu({ _id: "1", name: "Users", route: "/users", resourceKey: "users", level: 1 })];
-    const tree = buildEffectiveMenuTree(all, { users: { view: true, add: false, edit: false, delete: false } }, false);
+    const tree = buildEffectiveMenuTree(all, { users: { view: true, add: false, edit: false, delete: false, comment: false } }, false);
     expect(tree).toHaveLength(1);
     expect(tree[0].name).toBe("Users");
   });
@@ -42,7 +44,7 @@ describe("effective menu tree (requirement #15)", () => {
       menu({ _id: "parent", name: "User Management", level: 1, route: null }),
       menu({ _id: "child", name: "Users", level: 2, parentId: "parent", route: "/users", resourceKey: "users" }),
     ];
-    const tree = buildEffectiveMenuTree(all, { users: { view: true, add: false, edit: false, delete: false } }, false);
+    const tree = buildEffectiveMenuTree(all, { users: { view: true, add: false, edit: false, delete: false, comment: false } }, false);
     expect(tree).toHaveLength(1);
     expect(tree[0].name).toBe("User Management");
     expect(tree[0].children).toHaveLength(1);
@@ -59,7 +61,7 @@ describe("effective menu tree (requirement #15)", () => {
 
   it("excludes inactive menus even if the user has permission", () => {
     const all = [menu({ _id: "1", name: "Users", route: "/users", resourceKey: "users", isActive: false })];
-    const tree = buildEffectiveMenuTree(all, { users: { view: true, add: false, edit: false, delete: false } }, false);
+    const tree = buildEffectiveMenuTree(all, { users: { view: true, add: false, edit: false, delete: false, comment: false } }, false);
     expect(tree).toHaveLength(0);
   });
 
@@ -76,5 +78,37 @@ describe("effective menu tree (requirement #15)", () => {
     ];
     const tree = buildEffectiveMenuTree(all, {}, true);
     expect(tree.map((n) => n.name)).toEqual(["A", "B"]);
+  });
+
+  describe("menu scope (requirement #7)", () => {
+    const fullPerms = { view: true, add: true, edit: true, delete: true, comment: true };
+    const superAdminMenu = menu({ _id: "1", name: "Roles", route: "/admin/roles", scope: MENU_SCOPES.SUPER_ADMIN_ADMIN });
+    const normalAdminMenu = menu({ _id: "2", name: "Moderators", route: "/normal-admin/users", resourceKey: "users", scope: MENU_SCOPES.NORMAL_ADMIN_MODERATOR });
+
+    it("hides a Super Admin/Admin-scoped menu from a Normal Admin, even with a matching resourceKey permission", () => {
+      const tree = buildEffectiveMenuTree([superAdminMenu], { roles: fullPerms }, false, [ROLE_SLUGS.NORMAL_ADMIN]);
+      expect(tree).toHaveLength(0);
+    });
+
+    it("hides a Normal Admin/Moderator-scoped menu from an Admin", () => {
+      const tree = buildEffectiveMenuTree([normalAdminMenu], { users: fullPerms }, false, [ROLE_SLUGS.ADMIN]);
+      expect(tree).toHaveLength(0);
+    });
+
+    it("shows a Super Admin/Admin-scoped menu to Admin, and a Normal Admin/Moderator-scoped menu to Moderator", () => {
+      expect(buildEffectiveMenuTree([superAdminMenu], { roles: fullPerms }, false, [ROLE_SLUGS.ADMIN])).toHaveLength(1);
+      expect(buildEffectiveMenuTree([normalAdminMenu], { users: fullPerms }, false, [ROLE_SLUGS.MODERATOR])).toHaveLength(1);
+    });
+
+    it("Super Admin sees both scopes regardless of roleSlugs (requirement #2)", () => {
+      const tree = buildEffectiveMenuTree([superAdminMenu, normalAdminMenu], {}, true, []);
+      expect(tree).toHaveLength(2);
+    });
+
+    it("a scope-less menu (e.g. the customer Dashboard link) is unaffected by scope filtering", () => {
+      const dashboard = menu({ _id: "3", name: "Dashboard", route: "/dashboard", scope: null });
+      const tree = buildEffectiveMenuTree([dashboard], {}, false, [ROLE_SLUGS.CUSTOMER]);
+      expect(tree).toHaveLength(1);
+    });
   });
 });

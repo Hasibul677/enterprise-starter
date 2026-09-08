@@ -16,8 +16,14 @@ import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/feedback/alert";
 import { applyServerErrors } from "@/components/forms/set-server-errors";
 import { apiClient, ApiClientError } from "@/lib/api-client/api-client";
+import { MENU_SCOPES } from "@/lib/permissions/constants";
 
 type MenuOption = { _id: string; name: string; level: number };
+
+const SCOPE_OPTIONS = [
+  { value: MENU_SCOPES.SUPER_ADMIN_ADMIN, label: "Super Admin / Admin" },
+  { value: MENU_SCOPES.NORMAL_ADMIN_MODERATOR, label: "Normal Admin / Moderator" },
+];
 
 export default function NewMenuPage() {
   const router = useRouter();
@@ -31,7 +37,17 @@ export default function NewMenuPage() {
 
   const form = useForm<MenuCreateInput>({
     resolver: zodResolver(menuCreateSchema),
-    defaultValues: { name: "", key: "", label: "", slug: "", parentId: null, sortOrder: 0, isActive: true, isVisible: true },
+    defaultValues: {
+      name: "",
+      key: "",
+      label: "",
+      slug: "",
+      parentId: null,
+      sortOrder: 0,
+      isActive: true,
+      isVisible: true,
+      scope: MENU_SCOPES.SUPER_ADMIN_ADMIN,
+    },
   });
 
   async function onSubmit(values: MenuCreateInput) {
@@ -53,7 +69,7 @@ export default function NewMenuPage() {
 
   return (
     <ContentContainer>
-      <PageHeader title="Add menu item" description="Up to 3 levels deep." />
+      <PageHeader title="Add menu item" description="Up to 3 levels deep." backHref="/admin/menus" />
       {globalError && <div className="mb-4"><Alert variant="danger">{globalError}</Alert></div>}
       <Form form={form} onSubmit={onSubmit} className="max-w-lg">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -72,6 +88,14 @@ export default function NewMenuPage() {
         )} />
         <FormField<MenuCreateInput> name="route" label="Route (optional)" description="Leave empty for a parent-only grouping item." render={(f) => (
           <Input id={f.id} value={(f.value as string) ?? ""} onChange={(e) => f.onChange(e.target.value || null)} onBlur={f.onBlur} invalid={f.invalid} placeholder="/example" />
+        )} />
+        <FormField<MenuCreateInput> name="scope" label="Menu Scope" required description="Which dashboard tree this item belongs to - required for every menu." render={(f) => (
+          <Select
+            id={f.id}
+            value={f.value as string}
+            onChange={(e) => f.onChange(e.target.value)}
+            options={SCOPE_OPTIONS}
+          />
         )} />
         <FormField<MenuCreateInput> name="parentId" label="Parent menu" render={(f) => (
           <Select

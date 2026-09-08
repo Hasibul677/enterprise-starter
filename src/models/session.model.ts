@@ -14,6 +14,12 @@ const sessionSchema = new Schema(
     lastUsedAt: { type: Date, default: null },
     userAgent: { type: String, default: null },
     ipAddress: { type: String, default: null },
+    // Set only for an impersonation session (requirement #21): the SUPER_ADMIN
+    // userId that initiated it. `userId` above stays the IMPERSONATED target -
+    // every authorization decision keys off `userId`, never this field, which
+    // exists purely to survive refresh rotation (session-service.ts) and to
+    // know who to restore on "Return to Super Admin".
+    impersonatedBy: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
   },
   { timestamps: true }
 );

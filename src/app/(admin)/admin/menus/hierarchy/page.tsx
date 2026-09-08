@@ -64,7 +64,7 @@ function TreeRow({ node, depth = 0 }: { node: MenuNode; depth?: number }) {
         style={{ paddingLeft: depth * 20 }}
       >
         <GripVertical className="h-4 w-4 shrink-0 text-ink-soft/40" />
-        <Link href={`/menus/${node._id}/edit`} className="text-sm font-medium text-ink hover:text-accent">
+        <Link href={`/admin/menus/${node._id}/edit`} className="text-sm font-medium text-ink hover:text-accent">
           {node.name}
         </Link>
         {node.route && <span className="text-xs text-ink-soft">{node.route}</span>}
@@ -112,6 +112,7 @@ export default function MenuHierarchyPage() {
       <PageHeader
         title="Menu hierarchy"
         description="Full 3-level structure, including inactive and hidden items. Click an item to edit it, including reparenting."
+        backHref="/admin/menus"
       />
       {loading && <Loading />}
       {error && <ErrorState message={error} onRetry={load} />}

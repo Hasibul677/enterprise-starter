@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { resolveCurrentAccess } from "@/lib/auth/current-user";
-import { requirePermission, requireSuperAdmin } from "@/lib/permissions/guard";
+import { requirePermission, requireSuperAdmin, requireAdminAreaAccess } from "@/lib/permissions/guard";
 import { CORE_RESOURCES } from "@/lib/permissions/constants";
 import { roleUpdateSchema } from "@/features/roles/schemas/role-update.schema";
 import { updateRole, deactivateRole } from "@/services/role.service";
@@ -16,7 +16,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
   try {
     await connectToDatabase();
     const access = await resolveCurrentAccess();
-    requireSuperAdmin(access);
+    requireAdminAreaAccess(access);
     requirePermission(access, CORE_RESOURCES.ROLES, "view");
 
     const { id: rawId } = await params;

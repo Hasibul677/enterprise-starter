@@ -15,6 +15,14 @@ export type AppJwtPayload = JWTPayload & {
   tokenType: TokenType;
   tokenVersion: number;
   jti: string;
+  // Present only for an impersonation session (requirement #21): the
+  // SUPER_ADMIN userId that initiated it. `sub` above is always the
+  // EFFECTIVE identity (the impersonated target) - every permission/menu/
+  // route decision in the app keys off `sub` alone, exactly like a normal
+  // login, so an impersonated session can never itself carry Super Admin
+  // authority. This claim is metadata only: it drives the "Return to Super
+  // Admin" flow and the persistent UI banner, nothing else.
+  impersonatedBy?: string;
 };
 
 function getAccessSecret() {
@@ -28,12 +36,14 @@ export async function signAccessToken(params: {
   userId: string;
   sessionId: string;
   tokenVersion: number;
+  impersonatedBy?: string | null;
 }): Promise<string> {
   const env = getEnv();
   return new SignJWT({
     tokenType: "access",
     sessionId: params.sessionId,
     tokenVersion: params.tokenVersion,
+    ...(params.impersonatedBy ? { impersonatedBy: params.impersonatedBy } : {}),
   })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(params.userId)
@@ -50,12 +60,14 @@ export async function signRefreshToken(params: {
   sessionId: string;
   tokenVersion: number;
   jti: string;
+  impersonatedBy?: string | null;
 }): Promise<string> {
   const env = getEnv();
   return new SignJWT({
     tokenType: "refresh",
     sessionId: params.sessionId,
     tokenVersion: params.tokenVersion,
+    ...(params.impersonatedBy ? { impersonatedBy: params.impersonatedBy } : {}),
   })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(params.userId)

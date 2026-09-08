@@ -16,8 +16,8 @@ export const userRepository = {
     return UserModel.create(data);
   },
 
-  async list(params: { page: number; limit: number; search?: string }) {
-    const filter: Record<string, unknown> = {};
+  async list(params: { page: number; limit: number; search?: string; scopeFilter?: Record<string, unknown> }) {
+    const filter: Record<string, unknown> = { ...(params.scopeFilter ?? {}) };
     if (params.search) {
       filter.$or = [
         { firstName: { $regex: params.search, $options: "i" } },
@@ -39,5 +39,9 @@ export const userRepository = {
 
   async incrementTokenVersion(id: string) {
     return UserModel.findByIdAndUpdate(id, { $inc: { tokenVersion: 1 } }, { new: true }).exec();
+  },
+
+  async updatePermissionOverrides(id: string, permissionOverrides: Record<string, Record<string, boolean>>) {
+    return UserModel.findByIdAndUpdate(id, { permissionOverrides }, { new: true }).populate("roles").exec();
   },
 };

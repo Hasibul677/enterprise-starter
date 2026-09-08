@@ -7,6 +7,24 @@ import type { RoleCreateInput } from "@/features/roles/schemas/role-create.schem
 import type { RoleUpdateInput } from "@/features/roles/schemas/role-update.schema";
 import type { RoleDocument } from "@/models/role.model";
 
+/**
+ * A role that is currently assigned to one or more users (active or not -
+ * deactivating the role would silently strip those users of everything it
+ * grants, with no explicit reassignment) can never be deactivated. This is
+ * checked independently of the isSystem guard, so it also protects custom
+ * roles created through the Roles admin UI, not just the 5 fixed hierarchy
+ * roles.
+ */
+async function assertRoleHasNoAssignedUsers(roleId: string, roleName: string) {
+  const assignedCount = await UserModel.countDocuments({ roles: roleId });
+  if (assignedCount > 0) {
+    throw new ValidationError(
+      `Cannot deactivate or delete the '${roleName}' role - it is still assigned to ${assignedCount} user(s).`,
+      [{ field: "isActive", message: "Reassign every user holding this role to a different role first." }]
+    );
+  }
+}
+
 export async function createRole(input: RoleCreateInput, actorUserId: string) {
   const existing = await roleRepository.findBySlug(input.slug);
   if (existing) throw new ConflictError("A role with this slug already exists.");
@@ -30,10 +48,13 @@ export async function updateRole(roleId: string, input: RoleUpdateInput, actorUs
   const role = await roleRepository.findById(roleId);
   if (!role) throw new NotFoundError("Role not found.");
 
-  if (role.isSystem && input.isActive === false) {
-    throw new ValidationError("System roles cannot be deactivated.", [
-      { field: "isActive", message: "This is a protected system role." },
-    ]);
+  if (input.isActive === false) {
+    if (role.isSystem) {
+      throw new ValidationError("System roles cannot be deactivated.", [
+        { field: "isActive", message: "This is a protected system role." },
+      ]);
+    }
+    await assertRoleHasNoAssignedUsers(roleId, role.name);
   }
 
   const updated = await roleRepository.updateById(roleId, {
@@ -53,8 +74,9 @@ export async function updateRole(roleId: string, input: RoleUpdateInput, actorUs
 }
 
 /**
- * Prevents both accidental deletion of built-in system roles AND removing
- * the last viable path to Super Admin access (requirement #10/#33).
+ * Prevents deleting/deactivating a built-in system role, a role that is
+ * still assigned to any user, or the last viable path to Super Admin access
+ * (requirement #10/#33).
  */
 export async function deactivateRole(roleId: string, actorUserId: string) {
   const role = await roleRepository.findById(roleId);
@@ -63,6 +85,8 @@ export async function deactivateRole(roleId: string, actorUserId: string) {
   if (role.isSystem) {
     throw new ValidationError("System roles cannot be deleted or deactivated.");
   }
+
+  await assertRoleHasNoAssignedUsers(roleId, role.name);
 
   if (role.slug === SUPER_ADMIN_ROLE_SLUG) {
     const otherActiveSuperAdmins = await UserModel.countDocuments({ roles: role._id, status: "ACTIVE" });

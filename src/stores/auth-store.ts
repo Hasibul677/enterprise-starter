@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { PermissionMap } from "@/lib/permissions/constants";
+import type { PermissionMap, RoleSlug } from "@/lib/permissions/constants";
 
 export type SessionUser = {
   _id: string;
@@ -23,15 +23,20 @@ type AuthState = {
   user: SessionUser | null;
   permissions: PermissionMap;
   isSuperAdmin: boolean;
+  roleSlugs: RoleSlug[];
   menus: MenuTreeNode[];
   warning: boolean;
+  /** Requirement #21 - true iff the CURRENT session is a Super Admin impersonating this user. */
+  isImpersonating: boolean;
   hydrated: boolean;
   setSession: (payload: {
     user: SessionUser;
     permissions: PermissionMap;
     isSuperAdmin: boolean;
+    roleSlugs: RoleSlug[];
     menus: MenuTreeNode[];
     warning: boolean;
+    isImpersonating?: boolean;
   }) => void;
   clearSession: () => void;
 };
@@ -48,9 +53,21 @@ export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   permissions: {},
   isSuperAdmin: false,
+  roleSlugs: [],
   menus: [],
   warning: false,
+  isImpersonating: false,
   hydrated: false,
-  setSession: (payload) => set({ ...payload, hydrated: true }),
-  clearSession: () => set({ user: null, permissions: {}, isSuperAdmin: false, menus: [], warning: false, hydrated: true }),
+  setSession: (payload) => set({ ...payload, isImpersonating: payload.isImpersonating ?? false, hydrated: true }),
+  clearSession: () =>
+    set({
+      user: null,
+      permissions: {},
+      isSuperAdmin: false,
+      roleSlugs: [],
+      menus: [],
+      warning: false,
+      isImpersonating: false,
+      hydrated: true,
+    }),
 }));

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Dialog } from "./dialog";
 import { Button } from "@/components/ui/button";
 
@@ -12,6 +12,8 @@ export type ConfirmDialogProps = {
   description?: string;
   confirmLabel?: string;
   variant?: "primary" | "danger";
+  /** Extra content rendered below the default body text - e.g. an inline error after a failed confirm. */
+  children?: ReactNode;
 };
 
 /** Foundation reused by Delete User, Block User, Disable User, etc. */
@@ -23,6 +25,7 @@ export function ConfirmDialog({
   description,
   confirmLabel = "Confirm",
   variant = "danger",
+  children,
 }: ConfirmDialogProps) {
   const [submitting, setSubmitting] = useState(false);
 
@@ -55,6 +58,7 @@ export function ConfirmDialog({
       }
     >
       <p className="text-sm text-ink-soft">This action can be reviewed later in the audit log.</p>
+      {children}
     </Dialog>
   );
 }

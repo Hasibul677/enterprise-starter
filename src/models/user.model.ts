@@ -1,4 +1,5 @@
 import { Schema, model, models, type InferSchemaType, type Model } from "mongoose";
+import { resourcePermissionSchema, validatePermissionMap } from "@/models/shared/resource-permission.schema";
 
 export const USER_STATUSES = ["ACTIVE", "WARNING", "BLOCKED", "DISABLED"] as const;
 export type UserStatus = (typeof USER_STATUSES)[number];
@@ -24,6 +25,23 @@ const userSchema = new Schema(
     // Bumped on password change / forced logout / admin security action.
     // Any previously-issued JWT whose tokenVersion no longer matches is rejected.
     tokenVersion: { type: Number, default: 0 },
+    // Ownership for the NORMAL_ADMIN -> MODERATOR relationship (set when a
+    // NORMAL_ADMIN creates a MODERATOR). Distinct from createdBy - a Super
+    // Admin could create a moderator on a normal admin's behalf without
+    // becoming its manager. See role-hierarchy.ts canManageTargetUser().
+    managedBy: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
+    // Per-user permission grants, unioned on top of this user's role-derived
+    // permissions the same way multiple roles are unioned (see
+    // mergeRolePermissions() / current-user.ts). This is how a Super Admin
+    // grants an individual ADMIN extra access - or a Normal Admin grants an
+    // individual MODERATOR it manages extra access - without editing the
+    // shared Role document that would affect every other admin/moderator.
+    permissionOverrides: {
+      type: Map,
+      of: resourcePermissionSchema,
+      default: {},
+      validate: { validator: validatePermissionMap, message: "Invalid permission map." },
+    },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
     updatedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
   },

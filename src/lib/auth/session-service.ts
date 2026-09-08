@@ -10,11 +10,23 @@ import { AuthenticationError } from "@/lib/errors/app-error";
 const REFRESH_HASH_ROUNDS = 10;
 
 /**
- * Issues a brand-new session + token pair (used at login and at rotation).
- * The refresh token's jti is hashed before being persisted - a DB read alone
- * can never be replayed as a valid refresh token.
+ * Issues a brand-new session + token pair (used at login, at rotation, and
+ * to start an impersonation session - requirement #21). The refresh token's
+ * jti is hashed before being persisted - a DB read alone can never be
+ * replayed as a valid refresh token.
+ *
+ * `impersonatedBy` (Super Admin userId), when passed, is stamped onto both
+ * the session record and the tokens themselves - this is what makes the
+ * resulting session identifiable as an impersonation of `userId`, while
+ * every actual authorization decision still keys off `userId` alone.
  */
-export async function issueTokenPair(params: { userId: string; tokenVersion: number; userAgent?: string; ipAddress?: string }) {
+export async function issueTokenPair(params: {
+  userId: string;
+  tokenVersion: number;
+  userAgent?: string;
+  ipAddress?: string;
+  impersonatedBy?: string | null;
+}) {
   const env = getEnv();
   const sessionId = nanoid();
   const refreshJti = nanoid();
@@ -24,12 +36,14 @@ export async function issueTokenPair(params: { userId: string; tokenVersion: num
     userId: params.userId,
     sessionId,
     tokenVersion: params.tokenVersion,
+    impersonatedBy: params.impersonatedBy,
   });
   const refreshToken = await signRefreshToken({
     userId: params.userId,
     sessionId,
     tokenVersion: params.tokenVersion,
     jti: refreshJti,
+    impersonatedBy: params.impersonatedBy,
   });
 
   await sessionRepository.create({
@@ -40,6 +54,7 @@ export async function issueTokenPair(params: { userId: string; tokenVersion: num
     expiresAt: addDurationFromNow(env.REFRESH_TOKEN_EXPIRES_IN),
     userAgent: params.userAgent ?? null,
     ipAddress: params.ipAddress ?? null,
+    impersonatedBy: (params.impersonatedBy ?? null) as unknown as never,
   });
 
   return { accessToken, refreshToken, sessionId };
@@ -103,6 +118,9 @@ export async function rotateRefreshToken(params: {
   }
 
   // Rotate: revoke the old record, issue a new session record + token pair.
+  // Carry `impersonatedBy` forward from the record being rotated, so a
+  // silent background refresh never "promotes" an impersonation session
+  // back into looking like a normal one (requirement #21).
   await sessionRepository.revoke(params.sessionId, "ROTATED");
 
   const rotated = await issueTokenPair({
@@ -110,6 +128,7 @@ export async function rotateRefreshToken(params: {
     tokenVersion: params.tokenVersion,
     userAgent: params.userAgent,
     ipAddress: params.ipAddress,
+    impersonatedBy: existing.impersonatedBy ? String(existing.impersonatedBy) : null,
   });
 
   await auditLogRepository.record({

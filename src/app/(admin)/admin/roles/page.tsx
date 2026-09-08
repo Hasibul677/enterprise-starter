@@ -2,13 +2,14 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Plus, Pencil } from "lucide-react";
 import { ContentContainer } from "@/components/layout/content-container";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumn } from "@/components/data-table/data-table";
 import { PermissionGuard } from "@/components/permission/permission-guard";
 import { DeleteButton } from "@/components/ui/delete-button";
+import { IconLink } from "@/components/ui/icon-link";
 import { apiClient, ApiClientError } from "@/lib/api-client/api-client";
 
 type RoleRow = { _id: string; name: string; slug: string; isSystem: boolean; isActive: boolean };
@@ -76,23 +77,22 @@ export default function RolesPage() {
         onRetry={load}
         emptyTitle="No roles yet"
         rowActions={(r) => (
-          <div className="flex items-center justify-end gap-3">
+          <div className="flex items-center justify-end gap-1">
             <PermissionGuard resource="roles" action="edit">
-              <Link href={`/roles/${r._id}/edit`} className="text-sm font-medium text-accent">
-                Edit
-              </Link>
+              <IconLink href={`/admin/roles/${r._id}/edit`} label="Edit">
+                <Pencil className="h-4 w-4" />
+              </IconLink>
             </PermissionGuard>
             {!r.isSystem && r.isActive && (
               <PermissionGuard resource="roles" action="delete">
                 <DeleteButton
                   itemLabel={r.name}
+                  actionLabel="Deactivate"
                   onDelete={async () => {
                     await apiClient.delete(`/api/roles/${r._id}`);
                     await load();
                   }}
-                >
-                  Deactivate
-                </DeleteButton>
+                />
               </PermissionGuard>
             )}
           </div>

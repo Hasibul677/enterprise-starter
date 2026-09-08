@@ -6,16 +6,26 @@ import { userRepository } from "@/repositories/user.repository";
 import { AuthenticationError, AccountStatusError } from "@/lib/errors/app-error";
 import { mergeRolePermissions } from "@/lib/permissions/merge";
 import { SUPER_ADMIN_ROLE_SLUG } from "@/lib/permissions/constants";
-import type { PermissionMap } from "@/lib/permissions/constants";
+import { getRoleSlugs } from "@/lib/permissions/role-hierarchy";
+import type { PermissionMap, RoleSlug } from "@/lib/permissions/constants";
 import type { RoleDocument } from "@/models/role.model";
 import type { UserDocument } from "@/models/user.model";
 
 export type ResolvedAccess = {
   user: UserDocument;
   roles: RoleDocument[];
+  roleSlugs: RoleSlug[];
   permissions: PermissionMap;
   isSuperAdmin: boolean;
   sessionId: string;
+  /**
+   * Set only when the CURRENT session is an impersonation session
+   * (requirement #21): the Super Admin userId that started it. Every field
+   * above is still derived from `user`/`roles` (the impersonated target)
+   * alone - this never grants extra authority, it only identifies who to
+   * restore on "Return to Super Admin" and drives the persistent UI banner.
+   */
+  impersonatedBy: string | null;
 };
 
 /**
@@ -79,9 +89,22 @@ export async function resolveCurrentAccess(request?: NextRequest): Promise<Resol
 
   const roles = (user.roles ?? []) as unknown as RoleDocument[];
   const isSuperAdmin = roles.some((r) => r.isActive && r.slug === SUPER_ADMIN_ROLE_SLUG);
-  const permissions = mergeRolePermissions(
-    roles.map((r) => ({ isActive: r.isActive, permissions: Object.fromEntries(r.permissions as unknown as Map<string, never>) }))
-  );
+  const permissions = mergeRolePermissions([
+    ...roles.map((r) => ({ isActive: r.isActive, permissions: Object.fromEntries(r.permissions as unknown as Map<string, never>) })),
+    // Per-user overrides (requirement #9) union in the same way multiple
+    // roles do - always "active" since they belong to this specific user.
+    { isActive: true, permissions: Object.fromEntries((user.permissionOverrides ?? new Map()) as unknown as Map<string, never>) },
+  ]);
 
-  return { user, roles, permissions, isSuperAdmin, sessionId: payload.sessionId };
+  const roleSlugs = getRoleSlugs(roles);
+
+  return {
+    user,
+    roles,
+    roleSlugs,
+    permissions,
+    isSuperAdmin,
+    sessionId: payload.sessionId,
+    impersonatedBy: payload.impersonatedBy ?? null,
+  };
 }

@@ -34,17 +34,129 @@
   --font-sans: "Public Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
-body {
-  background: var(--color-paper);
-  color: var(--color-ink);
-  font-family: var(--font-sans);
+/*
+ * These base resets must live in Tailwind's own "base" layer. `@import
+ * "tailwindcss"` declares the `theme, base, components, utilities` cascade
+ * layer order - any CSS written *unlayered* (outside an @layer block) beats
+ * every layered rule regardless of specificity, per the CSS cascade-layers
+ * spec. Left unlayered, this `* { border-color }` reset would permanently
+ * shadow every `border-{color}` utility (border-accent, border-danger, focus
+ * states, ...) app-wide, no matter how specific the utility class is.
+ */
+@layer base {
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+  }
+
+  * {
+    border-color: var(--color-line);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
 }
 
-* {
-  border-color: var(--color-line);
+/* Ambient motion for the auth hero panel's decorative gradient blobs. */
+@keyframes blob-float {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(24px, -28px) scale(1.06);
+  }
+  66% {
+    transform: translate(-18px, 18px) scale(0.96);
+  }
 }
 
-:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+.animate-blob {
+  animation: blob-float 16s ease-in-out infinite;
+}
+
+/* Draws attention to a freshly-surfaced form error without being jarring. */
+@keyframes shake-x {
+  10%,
+  90% {
+    transform: translateX(-1px);
+  }
+  20%,
+  80% {
+    transform: translateX(2px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-3px);
+  }
+  40%,
+  60% {
+    transform: translateX(3px);
+  }
+}
+
+.animate-shake {
+  animation: shake-x 0.4s ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-blob,
+  .animate-shake {
+    animation: none;
+  }
+}
+
+/*
+ * The auth hero panel's decorative copy (tagline/features/trust line) has to
+ * disappear on ANY viewport too short to fit it alongside the form without
+ * scrolling - not just narrow ones. A plain `sm:`/`lg:` (width-only) variant
+ * would wrongly keep this content visible on a wide-but-short viewport (e.g.
+ * a landscape phone), so these gate on width AND height together.
+ */
+@layer utilities {
+  .auth-tagline {
+    display: none;
+  }
+  .auth-features {
+    display: none;
+  }
+  .auth-trust {
+    display: none;
+  }
+
+  @media (min-width: 640px) and (min-height: 560px) {
+    .auth-tagline {
+      display: block;
+    }
+  }
+
+  @media (min-width: 1024px) and (min-height: 720px) {
+    .auth-features {
+      display: flex;
+      flex-direction: column;
+    }
+  }
+
+  @media (min-width: 1024px) and (min-height: 780px) {
+    .auth-trust {
+      display: block;
+    }
+  }
+
+  /*
+   * On a stacked (<lg) layout, the hero's own height eats directly into the
+   * form's available space (unlike lg+, where they're independent grid
+   * columns). On a genuinely tiny stacked viewport (e.g. a phone rotated to
+   * landscape, ~375px tall), even the compact logo bar has to give way so
+   * the registration form's fields and submit button stay fully visible.
+   */
+  @media (max-width: 1023px) and (max-height: 420px) {
+    .auth-topbar {
+      display: none;
+    }
+  }
 }

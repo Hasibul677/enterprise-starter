@@ -53,21 +53,33 @@ Client/UI
   HttpOnly cookies (`src/lib/security/cookies.ts`); CSRF uses a double-submit
   cookie (`x-csrf-token` header, verified in `src/lib/security/csrf.ts`).
 - JWT payloads stay minimal (`sub`, `sessionId`, `tokenType`, `tokenVersion`,
-  `jti`, standard claims). Never add user objects, permissions, or menus to a
-  token.
+  `jti`, standard claims, plus the optional `impersonatedBy` claim below).
+  Never add user objects, permissions, or menus to a token.
 - Refresh tokens rotate on every use (`src/lib/auth/session-service.ts`).
   Reuse of an already-rotated refresh token revokes the session - this is a
   security event, not a retryable error.
 - Public registration (`POST /api/auth/register`) can only ever create a
-  Viewer-role user. Zod schemas are allow-lists: extra client fields
+  Customer-role user. Zod schemas are allow-lists: extra client fields
   (`roles`, `isSuperAdmin`, `status`, ...) are silently dropped, never trusted.
 - Super Admin authority comes from the DB (`role.slug === "super-admin"` +
   `role.isActive`), resolved server-side in `resolveCurrentAccess()`. Never
   trust a client-supplied `isSuperAdmin` flag.
-- System roles (`isSystem: true`) cannot be deleted/deactivated. The last
+- System roles (`isSystem: true`) cannot be deleted/deactivated; neither can
+  a role that's still assigned to any user (`role.service.ts`
+  `assertRoleHasNoAssignedUsers()`) - reassign every holder first. The last
   active Super Admin cannot be removed (see `deactivateRole()`).
 - The 3-level menu hierarchy is validated on every create/update
   (`validateMenuHierarchy()`): no self-parenting, no cycles, max depth 3.
+- Super Admin "Login as User" impersonation (`POST /api/auth/impersonate` /
+  `.../impersonate/end`, `src/lib/auth/auth-service.ts`) issues a REAL
+  session for the target via the same `issueTokenPair()` every login uses -
+  never a client-side role swap. The `impersonatedBy` JWT/session claim is
+  metadata only (drives the banner + "Return to Super Admin"); every
+  authorization decision still keys off `sub`/`userId` alone, so an
+  impersonated session can never itself carry Super Admin authority.
+  Eligibility (`getImpersonationIneligibleReason()` in
+  `role-hierarchy.ts`) blocks impersonating another Super Admin, yourself,
+  or a non-active account.
 
 ## API conventions
 
@@ -88,6 +100,30 @@ Client/UI
 - Multi-role merge is UNION/OR across **active** roles only
   (`mergeRolePermissions()`). Do not introduce deny-permissions without
   revisiting this algorithm and its tests.
+- The app has a fixed 5-role hierarchy (`ROLE_SLUGS` in
+  `src/lib/permissions/constants.ts`): `SUPER_ADMIN -> {ADMIN, NORMAL_ADMIN ->
+  MODERATOR}`, plus an independent `CUSTOMER`. `src/lib/permissions/role-hierarchy.ts`
+  is the single source of truth for role-hierarchy authority - who can
+  create/manage which role (`CREATABLE_ROLES_BY`, `MANAGEABLE_TARGET_ROLES_BY`)
+  and who can grant which permission to whom (`PERMISSION_GRANTERS`,
+  `GRANTABLE_RESOURCES_BY`). Extend these tables for new authority rules;
+  never hardcode a role-slug check somewhere else.
+- `/admin/**` is the shared SUPER_ADMIN/ADMIN dashboard tree
+  (`requireAdminAreaAccess()`/`requireAdminAreaPage()`); `/normal-admin/**`
+  is the shared NORMAL_ADMIN/MODERATOR tree
+  (`requireNormalAdminAreaAccess()`/`requireNormalAdminAreaPage()`),
+  completely separate menus/routes from `/admin/**`. Both are additionally
+  gated by ordinary `requirePermission()` for the specific action - the area
+  guard only proves the actor belongs in that dashboard at all.
+- `User.managedBy` records NORMAL_ADMIN -> MODERATOR ownership (who created/
+  manages that moderator); `User.permissionOverrides` is a per-user
+  `PermissionMap` unioned on top of the role-derived baseline the same way
+  multiple roles union - see `current-user.ts`. Both are enforced via
+  `canManageTargetUser()`/`canGrantPermissionOverride()`, never inferred.
+- `Menu.scope` (`MENU_SCOPES.SUPER_ADMIN_ADMIN` / `NORMAL_ADMIN_MODERATOR`)
+  is required on every menu created through the Menu admin UI and filters
+  `buildEffectiveMenuTree()` in addition to the existing resourceKey
+  permission check.
 
 ## Component rules
 

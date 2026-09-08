@@ -2,29 +2,37 @@
 
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
-import { Button, type ButtonProps } from "./button";
+import { IconButton, type IconButtonProps } from "./icon-button";
 import { ConfirmDialog } from "@/components/modal/confirm-dialog";
+import { cn } from "@/lib/utils/cn";
 
-export type DeleteButtonProps = Omit<ButtonProps, "onClick"> & {
+export type DeleteButtonProps = Omit<IconButtonProps, "onClick" | "label" | "children"> & {
   itemLabel: string;
+  /** Tooltip text + confirm-dialog verb - e.g. "Deactivate" instead of the default "Delete". */
+  actionLabel?: string;
   onDelete: () => Promise<void> | void;
 };
 
-export function DeleteButton({ itemLabel, onDelete, children = "Delete", ...props }: DeleteButtonProps) {
+/** Icon-only, tooltip-labeled destructive action - hover shows `actionLabel` (e.g. "Deactivate"). */
+export function DeleteButton({ itemLabel, actionLabel = "Delete", onDelete, className, ...props }: DeleteButtonProps) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button variant="danger" size="sm" onClick={() => setOpen(true)} {...props}>
+      <IconButton
+        label={actionLabel}
+        onClick={() => setOpen(true)}
+        className={cn("hover:bg-danger-soft hover:text-danger", className)}
+        {...props}
+      >
         <Trash2 className="h-4 w-4" />
-        {children}
-      </Button>
+      </IconButton>
       <ConfirmDialog
         open={open}
         onClose={() => setOpen(false)}
         onConfirm={onDelete}
-        title={`Delete ${itemLabel}?`}
+        title={`${actionLabel} ${itemLabel}?`}
         description="This cannot be undone."
-        confirmLabel="Delete"
+        confirmLabel={actionLabel}
       />
     </>
   );

@@ -2,7 +2,9 @@ import { menuRepository } from "@/repositories/menu.repository";
 import { MAX_MENU_DEPTH } from "@/models/menu.model";
 import { ValidationError, NotFoundError } from "@/lib/errors/app-error";
 import { hasPermission } from "@/lib/permissions/merge";
-import type { PermissionMap } from "@/lib/permissions/constants";
+import { MENU_SCOPES } from "@/lib/permissions/constants";
+import { isAdminAreaRole, isNormalAdminAreaRole } from "@/lib/permissions/role-hierarchy";
+import type { PermissionMap, RoleSlug } from "@/lib/permissions/constants";
 import type { MenuDocument } from "@/models/menu.model";
 
 export type MenuTreeNode = MenuDocument & { children: MenuTreeNode[] };
@@ -62,13 +64,30 @@ export async function validateMenuHierarchy(params: {
 /**
  * Builds the tree of menus the current user is actually allowed to see:
  * - inactive menus are always excluded
+ * - a scoped menu (requirement #7) is only visible to a user whose role is
+ *   in that scope's dashboard - Super Admin sees both scopes (requirement
+ *   #2 "can access every menu ... regardless of normal permission
+ *   restrictions"); scope-less menus (e.g. the customer "Dashboard" link)
+ *   are unaffected by this filter
  * - a leaf menu requires `view` permission on its resourceKey (menus with no
  *   resourceKey are always visible, e.g. a plain "Dashboard" link)
  * - a parent with no visible/accessible descendants and no direct route is hidden
  * - sortOrder is respected at every level
  */
-export function buildEffectiveMenuTree(allMenus: MenuDocument[], permissions: PermissionMap, isSuperAdmin: boolean): MenuTreeNode[] {
-  const active = allMenus.filter((m) => m.isActive && m.isVisible);
+export function buildEffectiveMenuTree(
+  allMenus: MenuDocument[],
+  permissions: PermissionMap,
+  isSuperAdmin: boolean,
+  roleSlugs: RoleSlug[] = []
+): MenuTreeNode[] {
+  const canSeeScope = (m: MenuDocument) => {
+    if (isSuperAdmin || !m.scope) return true;
+    if (m.scope === MENU_SCOPES.SUPER_ADMIN_ADMIN) return isAdminAreaRole(roleSlugs);
+    if (m.scope === MENU_SCOPES.NORMAL_ADMIN_MODERATOR) return isNormalAdminAreaRole(roleSlugs);
+    return true;
+  };
+
+  const active = allMenus.filter((m) => m.isActive && m.isVisible && canSeeScope(m));
 
   const canSee = (m: MenuDocument) => isSuperAdmin || !m.resourceKey || hasPermission(permissions, m.resourceKey, "view");
 

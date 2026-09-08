@@ -13,15 +13,18 @@ export async function GET() {
     await connectToDatabase();
     const access = await resolveCurrentAccess();
     const allMenus = await listMenus();
-    const menuTree = buildEffectiveMenuTree(allMenus, access.permissions, access.isSuperAdmin);
+    const menuTree = buildEffectiveMenuTree(allMenus, access.permissions, access.isSuperAdmin, access.roleSlugs);
 
     return ok({
       user: access.user,
       roles: access.roles,
+      roleSlugs: access.roleSlugs,
       permissions: access.permissions,
       isSuperAdmin: access.isSuperAdmin,
       menus: menuTree,
       warning: access.user.status === "WARNING",
+      // Requirement #21 - drives the persistent impersonation banner.
+      isImpersonating: access.impersonatedBy !== null,
     });
   } catch (err) {
     return handleRouteError(err);

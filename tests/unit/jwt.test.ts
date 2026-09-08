@@ -52,4 +52,34 @@ describe("JWT signing and verification", () => {
     await expect(verifyAccessToken(token)).rejects.toThrow(TokenExpiredAppError);
     vi.useRealTimers();
   });
+
+  describe("impersonation claim (requirement #21)", () => {
+    it("carries the impersonatedBy claim through sign + verify when present", async () => {
+      const token = await signAccessToken({ userId: "target-1", sessionId: "session-1", tokenVersion: 0, impersonatedBy: "super-admin-1" });
+      const payload = await verifyAccessToken(token);
+
+      expect(payload.sub).toBe("target-1");
+      expect(payload.impersonatedBy).toBe("super-admin-1");
+    });
+
+    it("omits the impersonatedBy claim entirely for a normal (non-impersonated) session", async () => {
+      const token = await signAccessToken({ userId: "user-1", sessionId: "session-1", tokenVersion: 0 });
+      const payload = await verifyAccessToken(token);
+
+      expect(payload.impersonatedBy).toBeUndefined();
+    });
+
+    it("preserves impersonatedBy on a refresh token the same way", async () => {
+      const token = await signRefreshToken({
+        userId: "target-1",
+        sessionId: "session-1",
+        tokenVersion: 0,
+        jti: "jti-abc",
+        impersonatedBy: "super-admin-1",
+      });
+      const payload = await verifyRefreshToken(token);
+
+      expect(payload.impersonatedBy).toBe("super-admin-1");
+    });
+  });
 });

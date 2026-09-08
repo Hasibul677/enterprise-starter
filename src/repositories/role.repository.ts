@@ -7,6 +7,9 @@ export const roleRepository = {
   async findByIds(ids: string[]) {
     return RoleModel.find({ _id: { $in: ids } }).exec();
   },
+  async findBySlugs(slugs: string[]) {
+    return RoleModel.find({ slug: { $in: slugs } }).exec();
+  },
   async list() {
     return RoleModel.find().sort({ createdAt: -1 }).lean().exec();
   },

@@ -1,4 +1,5 @@
 import { Schema, model, models, type InferSchemaType, type Model } from "mongoose";
+import { MENU_SCOPE_VALUES } from "@/lib/permissions/constants";
 
 export const MAX_MENU_DEPTH = 3;
 
@@ -20,6 +21,10 @@ const menuSchema = new Schema(
     isVisible: { type: Boolean, default: true },
     // Which permission resource gates visibility of this menu item (requires `view`).
     resourceKey: { type: String, default: null },
+    // Which dashboard tree this menu belongs to (requirement #7). Only null
+    // for the handful of rows that live outside the Menu admin UI entirely
+    // (e.g. the customer "Dashboard" link seeded directly by seed.ts).
+    scope: { type: String, enum: [...MENU_SCOPE_VALUES, null], default: null },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
     updatedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
   },

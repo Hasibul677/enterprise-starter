@@ -80,7 +80,11 @@ export default function EditRolePage() {
 
   return (
     <ContentContainer>
-      <PageHeader title="Edit role" description={isSystem ? "This is a protected system role." : "Update this role's details and permissions."} />
+      <PageHeader
+        title="Edit role"
+        description={isSystem ? "This is a protected system role." : "Update this role's details and permissions."}
+        backHref="/admin/roles"
+      />
       {globalError && <div className="mb-4"><Alert variant="danger">{globalError}</Alert></div>}
       <Form form={form} onSubmit={onSubmit} className="max-w-2xl">
         <FormField<RoleUpdateInput> name="name" label="Name" render={(f) => (
