@@ -7,9 +7,11 @@ import { AppShell } from "@/components/layout/app-shell";
 import { Loading } from "@/components/feedback/loading";
 import { Alert } from "@/components/feedback/alert";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/modal/dialog";
 import { useAuthStore } from "@/stores/auth-store";
 import { apiClient } from "@/lib/api-client/api-client";
 import { useTrackClientNavigation } from "@/components/navigation/back-button";
+import { usePermissionSync } from "@/lib/auth/use-permission-sync";
 
 function roleLabel(slug: string): string {
   return slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -55,13 +57,13 @@ function ImpersonationBanner() {
 
 /**
  * Shared client-side shell for all 3 authenticated dashboard trees
- * ((dashboard) for Customer, (admin) for Super Admin/Admin, (normal-admin)
- * for Normal Admin/Moderator). This only hydrates the Zustand UI cache
+ * ((dashboard) for Customer, (admin) for Super Admin/Admin, (company-admin)
+ * for Company Admin/Moderator). This only hydrates the Zustand UI cache
  * (name, menus, permission flags for show/hide UX) and reacts to logout -
  * it grants no access. The actual route access decision already happened
  * server-side, in the Server Component layout that renders this (see
  * requireAuthenticatedPage() / requireAdminAreaPage() /
- * requireNormalAdminAreaPage() in src/lib/auth/route-guards.ts), before any
+ * requireCompanyAdminAreaPage() in src/lib/auth/route-guards.ts), before any
  * of this component's HTML was ever sent to the browser.
  */
 export function AuthenticatedShell({ children }: { children: ReactNode }) {
@@ -72,8 +74,15 @@ export function AuthenticatedShell({ children }: { children: ReactNode }) {
   const warning = useAuthStore((s) => s.warning);
   const isImpersonating = useAuthStore((s) => s.isImpersonating);
   const [failed, setFailed] = useState(false);
+  const [accessUpdatedOpen, setAccessUpdatedOpen] = useState(false);
 
   useTrackClientNavigation();
+
+  // Detects permission/menu changes an administrator makes elsewhere while
+  // this tab stays open, and redirects + surfaces the modal below only when
+  // the CURRENT page's own access was revoked (see use-permission-sync.ts
+  // for why an action-permission-only change never triggers this).
+  usePermissionSync(() => setAccessUpdatedOpen(true));
 
   useEffect(() => {
     function onLogout() {
@@ -108,6 +117,15 @@ export function AuthenticatedShell({ children }: { children: ReactNode }) {
         </div>
       )}
       {children}
+      <Dialog
+        open={accessUpdatedOpen}
+        onClose={() => setAccessUpdatedOpen(false)}
+        title="Access Updated"
+        description="Your access to this page has changed. An administrator updated your permissions, so you've been moved to your dashboard."
+        footer={<Button onClick={() => setAccessUpdatedOpen(false)}>OK</Button>}
+      >
+        <p className="text-sm text-ink-soft">You&apos;re still signed in - no need to log in again.</p>
+      </Dialog>
     </AppShell>
   );
 }

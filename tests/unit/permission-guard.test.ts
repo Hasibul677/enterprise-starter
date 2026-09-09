@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { requirePermission, requireAnyPermission, requireAllPermissions, requireAdminAreaAccess, requireNormalAdminAreaAccess } from "@/lib/permissions/guard";
+import { requirePermission, requireAnyPermission, requireAllPermissions, requireAdminAreaAccess, requireCompanyAdminAreaAccess } from "@/lib/permissions/guard";
 import { AuthorizationError } from "@/lib/errors/app-error";
-import { ROLE_SLUGS } from "@/lib/permissions/constants";
+import { USER_LAYERS } from "@/lib/permissions/constants";
 import type { ResolvedAccess } from "@/lib/auth/current-user";
 
 function access(overrides: Partial<ResolvedAccess>): ResolvedAccess {
@@ -9,6 +9,7 @@ function access(overrides: Partial<ResolvedAccess>): ResolvedAccess {
     user: {} as never,
     roles: [],
     roleSlugs: [],
+    userLayer: USER_LAYERS.CUSTOMER,
     permissions: {},
     isSuperAdmin: false,
     sessionId: "session-1",
@@ -88,31 +89,31 @@ describe("requireAnyPermission / requireAllPermissions (requirement #5)", () => 
   });
 });
 
-describe("requireAdminAreaAccess / requireNormalAdminAreaAccess (requirement #3/#4)", () => {
+describe("requireAdminAreaAccess / requireCompanyAdminAreaAccess (requirement #3/#4)", () => {
   it("allows Super Admin into both areas", () => {
     const acc = access({ isSuperAdmin: true });
     expect(() => requireAdminAreaAccess(acc)).not.toThrow();
-    expect(() => requireNormalAdminAreaAccess(acc)).not.toThrow();
+    expect(() => requireCompanyAdminAreaAccess(acc)).not.toThrow();
   });
 
   it("allows Admin into the admin area only", () => {
-    const acc = access({ roleSlugs: [ROLE_SLUGS.ADMIN] });
+    const acc = access({ userLayer: USER_LAYERS.ADMIN });
     expect(() => requireAdminAreaAccess(acc)).not.toThrow();
-    expect(() => requireNormalAdminAreaAccess(acc)).toThrow(AuthorizationError);
+    expect(() => requireCompanyAdminAreaAccess(acc)).toThrow(AuthorizationError);
   });
 
-  it("allows Normal Admin and Moderator into the normal-admin area only", () => {
-    const normalAdmin = access({ roleSlugs: [ROLE_SLUGS.NORMAL_ADMIN] });
-    const moderator = access({ roleSlugs: [ROLE_SLUGS.MODERATOR] });
-    expect(() => requireAdminAreaAccess(normalAdmin)).toThrow(AuthorizationError);
-    expect(() => requireNormalAdminAreaAccess(normalAdmin)).not.toThrow();
+  it("allows Company Admin and Moderator into the company-admin area only", () => {
+    const companyAdmin = access({ userLayer: USER_LAYERS.COMPANY_ADMIN });
+    const moderator = access({ userLayer: USER_LAYERS.MODERATOR });
+    expect(() => requireAdminAreaAccess(companyAdmin)).toThrow(AuthorizationError);
+    expect(() => requireCompanyAdminAreaAccess(companyAdmin)).not.toThrow();
     expect(() => requireAdminAreaAccess(moderator)).toThrow(AuthorizationError);
-    expect(() => requireNormalAdminAreaAccess(moderator)).not.toThrow();
+    expect(() => requireCompanyAdminAreaAccess(moderator)).not.toThrow();
   });
 
   it("blocks Customer from both areas", () => {
-    const acc = access({ roleSlugs: [ROLE_SLUGS.CUSTOMER] });
+    const acc = access({ userLayer: USER_LAYERS.CUSTOMER });
     expect(() => requireAdminAreaAccess(acc)).toThrow(AuthorizationError);
-    expect(() => requireNormalAdminAreaAccess(acc)).toThrow(AuthorizationError);
+    expect(() => requireCompanyAdminAreaAccess(acc)).toThrow(AuthorizationError);
   });
 });

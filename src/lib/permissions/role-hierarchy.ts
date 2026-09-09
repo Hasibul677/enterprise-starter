@@ -1,57 +1,94 @@
 /**
- * The authority engine for the 5-role hierarchy:
+ * The authority engine for the 5-layer user hierarchy:
  *
  *   SUPER_ADMIN
  *     |-- ADMIN
- *     `-- NORMAL_ADMIN
+ *     `-- COMPANY_ADMIN
  *           `-- MODERATOR
  *   CUSTOMER (independent)
  *
+ * Every function in this file takes a `UserLayer` scalar (User.userLayer),
+ * NEVER a role slug/name - roles are dynamic, unlimited, permission-only
+ * bundles that merely TARGET one of these 5 fixed layers (Role.userLayer).
+ * Hierarchy/authority decisions must never branch on which specific role a
+ * user holds; only on which layer they belong to. See constants.ts for why
+ * USER_LAYERS and ROLE_SLUGS are deliberately separate concepts.
+ *
  * This module is intentionally pure (no DB access) so it stays trivial to
  * unit test - see tests/unit/role-hierarchy.test.ts. Callers (services,
- * route handlers) own resolving DB documents into the plain slugs/ids this
+ * route handlers) own resolving DB documents into the plain layers/ids this
  * module works with.
  *
  * SUPER_ADMIN is handled by its own `isSuperAdmin` flag everywhere (as it
  * already was pre-hierarchy) and bypasses every check in this file - it is
  * still listed in the tables below for documentation/completeness.
  */
-import { CORE_RESOURCES, ROLE_SLUGS, type PermissionMap, type PermissionAction, type RoleSlug } from "./constants";
+import { CORE_RESOURCES, USER_LAYERS, type PermissionMap, type PermissionAction, type UserLayer } from "./constants";
 import { hasPermission } from "./merge";
 
-/** Which roles a user holding `key` is allowed to CREATE a brand-new user as (requirement #8). */
-export const CREATABLE_ROLES_BY: Record<RoleSlug, RoleSlug[]> = {
-  [ROLE_SLUGS.SUPER_ADMIN]: [ROLE_SLUGS.ADMIN, ROLE_SLUGS.NORMAL_ADMIN, ROLE_SLUGS.CUSTOMER],
-  [ROLE_SLUGS.ADMIN]: [ROLE_SLUGS.CUSTOMER],
-  [ROLE_SLUGS.NORMAL_ADMIN]: [ROLE_SLUGS.MODERATOR],
-  [ROLE_SLUGS.MODERATOR]: [],
-  [ROLE_SLUGS.CUSTOMER]: [],
+/** Which layers a user belonging to `key` is allowed to CREATE a brand-new user in (requirement #8). */
+export const CREATABLE_LAYERS_BY: Record<UserLayer, UserLayer[]> = {
+  [USER_LAYERS.SUPER_ADMIN]: [USER_LAYERS.ADMIN, USER_LAYERS.COMPANY_ADMIN, USER_LAYERS.CUSTOMER],
+  [USER_LAYERS.ADMIN]: [USER_LAYERS.CUSTOMER],
+  [USER_LAYERS.COMPANY_ADMIN]: [USER_LAYERS.MODERATOR],
+  [USER_LAYERS.MODERATOR]: [],
+  [USER_LAYERS.CUSTOMER]: [],
 };
 
-/** Which roles a user holding `key` is allowed to VIEW/EDIT/DEACTIVATE an EXISTING user of (requirement #3/#10). */
-export const MANAGEABLE_TARGET_ROLES_BY: Record<RoleSlug, RoleSlug[]> = {
-  [ROLE_SLUGS.SUPER_ADMIN]: [ROLE_SLUGS.ADMIN, ROLE_SLUGS.NORMAL_ADMIN, ROLE_SLUGS.MODERATOR, ROLE_SLUGS.CUSTOMER],
-  [ROLE_SLUGS.ADMIN]: [ROLE_SLUGS.CUSTOMER],
-  [ROLE_SLUGS.NORMAL_ADMIN]: [ROLE_SLUGS.MODERATOR],
-  [ROLE_SLUGS.MODERATOR]: [],
-  [ROLE_SLUGS.CUSTOMER]: [],
+/** Which layers a user belonging to `key` is allowed to VIEW/EDIT/DEACTIVATE an EXISTING user of (requirement #3/#10). */
+export const MANAGEABLE_TARGET_LAYERS_BY: Record<UserLayer, UserLayer[]> = {
+  [USER_LAYERS.SUPER_ADMIN]: [
+    USER_LAYERS.ADMIN,
+    USER_LAYERS.COMPANY_ADMIN,
+    USER_LAYERS.MODERATOR,
+    USER_LAYERS.CUSTOMER,
+  ],
+  [USER_LAYERS.ADMIN]: [USER_LAYERS.CUSTOMER],
+  [USER_LAYERS.COMPANY_ADMIN]: [USER_LAYERS.MODERATOR],
+  [USER_LAYERS.MODERATOR]: [],
+  [USER_LAYERS.CUSTOMER]: [],
 };
 
 /**
- * Who may grant PER-USER permission overrides, and to which role
- * (requirement #9). Deliberately narrower than MANAGEABLE_TARGET_ROLES_BY:
+ * Who may grant PER-USER permission overrides, and to which layer
+ * (requirement #9). Deliberately narrower than MANAGEABLE_TARGET_LAYERS_BY:
  * an ADMIN can view/edit CUSTOMER accounts but was never asked to grant
  * them permissions, so it isn't listed here.
  */
-export const PERMISSION_GRANTERS: Partial<Record<RoleSlug, RoleSlug>> = {
-  [ROLE_SLUGS.SUPER_ADMIN]: ROLE_SLUGS.ADMIN,
-  [ROLE_SLUGS.NORMAL_ADMIN]: ROLE_SLUGS.MODERATOR,
+export const PERMISSION_GRANTERS: Partial<Record<UserLayer, UserLayer>> = {
+  [USER_LAYERS.SUPER_ADMIN]: USER_LAYERS.ADMIN,
+  [USER_LAYERS.COMPANY_ADMIN]: USER_LAYERS.MODERATOR,
 };
 
 /** Resource keys a granter is allowed to include in a permission-override grant. */
-export const GRANTABLE_RESOURCES_BY: Partial<Record<RoleSlug, string[]>> = {
-  [ROLE_SLUGS.SUPER_ADMIN]: Object.values(CORE_RESOURCES),
-  [ROLE_SLUGS.NORMAL_ADMIN]: [CORE_RESOURCES.USERS, CORE_RESOURCES.COMMENTS, CORE_RESOURCES.REPORTS, CORE_RESOURCES.DASHBOARD],
+export const GRANTABLE_RESOURCES_BY: Partial<Record<UserLayer, string[]>> = {
+  [USER_LAYERS.SUPER_ADMIN]: Object.values(CORE_RESOURCES),
+  [USER_LAYERS.COMPANY_ADMIN]: [
+    CORE_RESOURCES.USERS,
+    CORE_RESOURCES.COMMENTS,
+    CORE_RESOURCES.REPORTS,
+    CORE_RESOURCES.DASHBOARD,
+  ],
+};
+
+/** Which layers SUPER_ADMIN / COMPANY_ADMIN are each allowed to create a dynamic ROLE for (requirement #3/#4/#7). */
+export const CREATABLE_ROLE_LAYERS_BY: Partial<Record<UserLayer, UserLayer[]>> = {
+  [USER_LAYERS.SUPER_ADMIN]: [USER_LAYERS.ADMIN, USER_LAYERS.COMPANY_ADMIN, USER_LAYERS.CUSTOMER],
+  [USER_LAYERS.COMPANY_ADMIN]: [USER_LAYERS.MODERATOR],
+};
+
+/**
+ * Which layers a non-Super-Admin actor is allowed to impersonate ("Login as
+ * user") at all. SUPER_ADMIN is handled separately via its `isSuperAdmin`
+ * bypass in getImpersonationIneligibleReason (may target any layer except
+ * another SUPER_ADMIN), same pattern as every other table in this file.
+ * CUSTOMER is deliberately absent from every entry here - a COMPANY_ADMIN
+ * must never be able to impersonate a CUSTOMER, and omitting it from the
+ * allow-list is what enforces that by default rather than needing a
+ * separate deny-list.
+ */
+export const IMPERSONATION_TARGET_LAYERS_BY: Partial<Record<UserLayer, UserLayer[]>> = {
+  [USER_LAYERS.COMPANY_ADMIN]: [USER_LAYERS.MODERATOR],
 };
 
 /** Resource keys that belong to each menu/route scope (used for menu-visibility and grant validation). */
@@ -64,80 +101,68 @@ export const SCOPE_RESOURCES = {
     CORE_RESOURCES.PERMISSIONS,
     CORE_RESOURCES.SETTINGS,
   ],
-  NORMAL_ADMIN_MODERATOR: [CORE_RESOURCES.USERS, CORE_RESOURCES.COMMENTS, CORE_RESOURCES.REPORTS],
+  COMPANY_ADMIN_MODERATOR: [CORE_RESOURCES.USERS, CORE_RESOURCES.COMMENTS, CORE_RESOURCES.REPORTS],
 } as const;
 
 type MinimalRole = { slug: string; isActive?: boolean };
 
-export function getRoleSlugs(roles: MinimalRole[]): RoleSlug[] {
-  return roles.filter((r) => r.isActive !== false).map((r) => r.slug as RoleSlug);
+/** Pure display helper - the role slugs a user holds, for UI badges/labels only. NEVER used for authority (see module doc comment). */
+export function getRoleSlugs(roles: MinimalRole[]): string[] {
+  return roles.filter((r) => r.isActive !== false).map((r) => r.slug);
 }
 
-function isInAdminArea(slugs: RoleSlug[]): boolean {
-  return slugs.includes(ROLE_SLUGS.ADMIN);
+export function isAdminAreaLayer(layer: UserLayer): boolean {
+  return layer === USER_LAYERS.ADMIN;
 }
 
-function isInNormalAdminArea(slugs: RoleSlug[]): boolean {
-  return slugs.includes(ROLE_SLUGS.NORMAL_ADMIN) || slugs.includes(ROLE_SLUGS.MODERATOR);
+export function isCompanyAdminAreaLayer(layer: UserLayer): boolean {
+  return layer === USER_LAYERS.COMPANY_ADMIN || layer === USER_LAYERS.MODERATOR;
 }
 
 /**
- * Requirement #8/#15: can a holder of `actorSlugs` create/assign a user as
- * `targetSlug`?
+ * Requirement #8/#15: can a user belonging to `actorLayer` create/assign a
+ * new user into `targetLayer`?
  *
  * Deliberately has NO `isSuperAdmin` bypass, unlike every other check in
- * this file: CREATABLE_ROLES_BY[SUPER_ADMIN] already lists exactly what the
- * spec grants it (ADMIN, NORMAL_ADMIN, CUSTOMER - requirement #8), and a
- * user with the isSuperAdmin flag always holds the `super-admin` slug in
- * `actorSlugs` too (see current-user.ts), so the table lookup alone gives
- * the identical, correct answer for Super Admin. A blanket bypass here
- * would let Super Admin assign MODERATOR directly, which breaks the
- * NORMAL_ADMIN-owns-its-MODERATORs invariant (`managedBy` would have
- * nowhere correct to point) - MODERATOR must only ever be created through
- * `/normal-admin`, by a Normal Admin.
+ * this file: CREATABLE_LAYERS_BY[SUPER_ADMIN] already lists exactly what the
+ * spec grants it (ADMIN, COMPANY_ADMIN, CUSTOMER - requirement #8). A
+ * blanket bypass here would let Super Admin create a MODERATOR directly,
+ * which breaks the COMPANY_ADMIN-owns-its-MODERATORs invariant (`managedBy`
+ * would have nowhere correct to point) - MODERATOR must only ever be
+ * created through `/company-admin`, by a Company Admin.
  */
-export function canAssignRole(actorSlugs: RoleSlug[], targetSlug: string): boolean {
-  return actorSlugs.some((slug) => CREATABLE_ROLES_BY[slug]?.includes(targetSlug as RoleSlug));
+export function canCreateUserInLayer(actorLayer: UserLayer, targetLayer: UserLayer): boolean {
+  return CREATABLE_LAYERS_BY[actorLayer]?.includes(targetLayer) ?? false;
 }
 
 /**
- * Requirement #3/#10: can a holder of `actorSlugs` manage (view/edit/
- * deactivate) a user whose roles are `targetSlugs`?
- *
- * Deliberately requires EVERY role the target holds to be inside the
- * actor's manageable set (not just any one of them) - this app supports
- * multi-role users (`mergeRolePermissions()` is a UNION across all of a
- * user's roles), so a target holding e.g. both `customer` AND `super-admin`
- * must never be manageable by an Admin just because `customer` happens to
- * match; an actor who can't fully account for every role a target holds has
- * no business touching that user at all.
+ * Requirement #3/#10: can a user belonging to `actorLayer` manage (view/
+ * edit/deactivate) a user belonging to `targetLayer`?
  */
-export function canManageRoleSlugs(actorSlugs: RoleSlug[], targetSlugs: RoleSlug[], isSuperAdmin = false): boolean {
+export function canManageLayer(actorLayer: UserLayer, targetLayer: UserLayer, isSuperAdmin = false): boolean {
   if (isSuperAdmin) return true;
-  if (targetSlugs.length === 0) return false;
-  const manageable = new Set(actorSlugs.flatMap((slug) => MANAGEABLE_TARGET_ROLES_BY[slug] ?? []));
-  return targetSlugs.every((targetSlug) => manageable.has(targetSlug));
+  return MANAGEABLE_TARGET_LAYERS_BY[actorLayer]?.includes(targetLayer) ?? false;
 }
 
 /**
- * Full target-user authority check: role-hierarchy authority AND, for the
- * NORMAL_ADMIN -> MODERATOR relationship, ownership (requirement #10 -
- * NORMAL_ADMIN A must not manage NORMAL_ADMIN B's moderators).
+ * Full target-user authority check: layer-hierarchy authority AND, for the
+ * COMPANY_ADMIN -> MODERATOR relationship, ownership (requirement #10 -
+ * COMPANY_ADMIN A must not manage COMPANY_ADMIN B's moderators).
  */
 export function canManageTargetUser(params: {
   actorUserId: string;
-  actorSlugs: RoleSlug[];
+  actorLayer: UserLayer;
   isSuperAdmin: boolean;
   targetUserId: string;
-  targetSlugs: RoleSlug[];
+  targetLayer: UserLayer;
   targetManagedBy?: string | null;
 }): boolean {
-  const { actorUserId, actorSlugs, isSuperAdmin, targetUserId, targetSlugs, targetManagedBy } = params;
+  const { actorUserId, actorLayer, isSuperAdmin, targetUserId, targetLayer, targetManagedBy } = params;
   if (isSuperAdmin) return true;
   if (actorUserId === targetUserId) return false; // never manage yourself through this path
-  if (!canManageRoleSlugs(actorSlugs, targetSlugs)) return false;
+  if (!canManageLayer(actorLayer, targetLayer)) return false;
 
-  if (actorSlugs.includes(ROLE_SLUGS.NORMAL_ADMIN) && targetSlugs.includes(ROLE_SLUGS.MODERATOR)) {
+  if (actorLayer === USER_LAYERS.COMPANY_ADMIN && targetLayer === USER_LAYERS.MODERATOR) {
     return targetManagedBy === actorUserId;
   }
   return true;
@@ -145,43 +170,45 @@ export function canManageTargetUser(params: {
 
 /**
  * Requirement #9: can the actor grant `resource`/`action` as a per-user
- * permission override to a user whose roles are `targetSlugs`? Enforces:
- * no self-grant, actor must hold a granter role for the target's role,
+ * permission override to a user belonging to `targetLayer`? Enforces:
+ * no self-grant, actor must be a granter layer for the target's layer,
  * resource must be inside that granter's allow-list, and (unless the actor
  * is Super Admin) the actor must already hold that exact permission
  * themselves - no lower-level user can grant authority it doesn't have.
  */
 export function canGrantPermissionOverride(params: {
   actorUserId: string;
-  actorSlugs: RoleSlug[];
+  actorLayer: UserLayer;
   actorEffectivePermissions: PermissionMap;
   isSuperAdmin: boolean;
   targetUserId: string;
-  targetSlugs: RoleSlug[];
+  targetLayer: UserLayer;
   targetManagedBy?: string | null;
   resource: string;
   action: PermissionAction;
 }): boolean {
-  const { actorUserId, actorSlugs, actorEffectivePermissions, isSuperAdmin, targetUserId, targetSlugs, targetManagedBy, resource, action } =
-    params;
+  const {
+    actorUserId,
+    actorLayer,
+    actorEffectivePermissions,
+    isSuperAdmin,
+    targetUserId,
+    targetLayer,
+    targetManagedBy,
+    resource,
+    action,
+  } = params;
 
   if (actorUserId === targetUserId) return false; // no self-grant, ever
 
   if (isSuperAdmin) return true;
 
-  // Same multi-role caution as canManageRoleSlugs(): the target must hold
-  // ONLY the expected grantee role, not merely include it alongside
-  // something else the granter has no business touching.
-  const granterSlug = actorSlugs.find((slug) => {
-    const granteeSlug = PERMISSION_GRANTERS[slug];
-    return granteeSlug !== undefined && targetSlugs.length > 0 && targetSlugs.every((t) => t === granteeSlug);
-  });
-  if (!granterSlug) return false;
+  if (PERMISSION_GRANTERS[actorLayer] !== targetLayer) return false;
 
-  // Ownership: NORMAL_ADMIN may only grant to its OWN moderators.
-  if (granterSlug === ROLE_SLUGS.NORMAL_ADMIN && targetManagedBy !== actorUserId) return false;
+  // Ownership: COMPANY_ADMIN may only grant to its OWN moderators.
+  if (actorLayer === USER_LAYERS.COMPANY_ADMIN && targetManagedBy !== actorUserId) return false;
 
-  const grantable = GRANTABLE_RESOURCES_BY[granterSlug] ?? [];
+  const grantable = GRANTABLE_RESOURCES_BY[actorLayer] ?? [];
   if (!grantable.includes(resource)) return false;
 
   // No lower-level user may grant authority it doesn't itself hold.
@@ -189,40 +216,71 @@ export function canGrantPermissionOverride(params: {
 }
 
 /**
- * Requirement #21: is `target` eligible to be impersonated by `actorUserId`?
+ * Can the actor create/edit/deactivate this dynamic ROLE document?
+ * SUPER_ADMIN: always. COMPANY_ADMIN: only a role it created itself,
+ * targeting MODERATOR (never the shared system default, managedBy: null,
+ * nor a peer COMPANY_ADMIN's role). Everyone else: never.
+ */
+export function canManageRole(params: {
+  isSuperAdmin: boolean;
+  actorUserId: string;
+  actorLayer: UserLayer;
+  role: { userLayer: UserLayer; managedBy?: string | null };
+}): boolean {
+  const { isSuperAdmin, actorUserId, actorLayer, role } = params;
+  if (isSuperAdmin) return true;
+  if (actorLayer !== USER_LAYERS.COMPANY_ADMIN) return false;
+  if (role.userLayer !== USER_LAYERS.MODERATOR) return false;
+  return role.managedBy === actorUserId;
+}
+
+/**
+ * Requirement #21 (plus the additional Company Admin account-access
+ * requirements): is `target` eligible to be impersonated by this actor?
  * Single source of truth for both the server (auth-service.ts - the real
  * enforcement) and the client-side row-action filter (UX only, never
  * trusted) - keeping them in sync automatically instead of two hand-written
- * copies of the same 3 rules. Callers already know the actor is a genuine
- * Super Admin (requireSuperAdmin() at the route boundary); this only
- * encodes TARGET eligibility, matching the "SUPER_ADMIN -> SUPER_ADMIN not
- * allowed" default and the "can't impersonate a disabled/blocked account"
- * rule (a normal login would reject them too).
+ * copies of the same rules. Callers still independently verify the actor
+ * itself is allowed to impersonate anyone at all (requireImpersonationActor()
+ * at the route boundary, guard.ts); this only encodes TARGET eligibility for
+ * a given actor, layer-hierarchy authority to impersonate that layer, and
+ * (for COMPANY_ADMIN -> MODERATOR) ownership.
  */
 export function getImpersonationIneligibleReason(params: {
   actorUserId: string;
+  actorLayer: UserLayer;
+  isSuperAdmin: boolean;
   targetUserId: string;
-  targetSlugs: RoleSlug[];
+  targetUserLayer: UserLayer;
   targetStatus: string;
+  targetManagedBy?: string | null;
 }): string | null {
-  const { actorUserId, targetUserId, targetSlugs, targetStatus } = params;
+  const { actorUserId, actorLayer, isSuperAdmin, targetUserId, targetUserLayer, targetStatus, targetManagedBy } =
+    params;
   if (actorUserId === targetUserId) return "You cannot impersonate your own account.";
-  if (targetSlugs.includes(ROLE_SLUGS.SUPER_ADMIN)) return "Super Admin accounts cannot be impersonated.";
+
+  if (isSuperAdmin) {
+    if (targetUserLayer === USER_LAYERS.SUPER_ADMIN) return "Super Admin accounts cannot be impersonated.";
+  } else {
+    if (!IMPERSONATION_TARGET_LAYERS_BY[actorLayer]?.includes(targetUserLayer)) {
+      return "You are not authorized to access this account.";
+    }
+    if (
+      actorLayer === USER_LAYERS.COMPANY_ADMIN &&
+      targetUserLayer === USER_LAYERS.MODERATOR &&
+      targetManagedBy !== actorUserId
+    ) {
+      return "You can only access moderators you manage.";
+    }
+  }
+
   if (targetStatus !== "ACTIVE") return "Only active accounts can be impersonated.";
   return null;
 }
 
-export function isAdminAreaRole(actorSlugs: RoleSlug[]): boolean {
-  return isInAdminArea(actorSlugs);
-}
-
-export function isNormalAdminAreaRole(actorSlugs: RoleSlug[]): boolean {
-  return isInNormalAdminArea(actorSlugs);
-}
-
 /** The dashboard tree a user should land on after login (requirement #4). */
-export function getDefaultLandingRoute(access: { isSuperAdmin: boolean; roleSlugs: RoleSlug[] }): string {
-  if (access.isSuperAdmin || isInAdminArea(access.roleSlugs)) return "/admin";
-  if (isInNormalAdminArea(access.roleSlugs)) return "/normal-admin";
+export function getDefaultLandingRoute(access: { isSuperAdmin: boolean; userLayer: UserLayer }): string {
+  if (access.isSuperAdmin || isAdminAreaLayer(access.userLayer)) return "/admin";
+  if (isCompanyAdminAreaLayer(access.userLayer)) return "/company-admin";
   return "/dashboard";
 }

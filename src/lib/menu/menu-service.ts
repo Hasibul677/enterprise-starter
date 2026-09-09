@@ -2,9 +2,9 @@ import { menuRepository } from "@/repositories/menu.repository";
 import { MAX_MENU_DEPTH } from "@/models/menu.model";
 import { ValidationError, NotFoundError } from "@/lib/errors/app-error";
 import { hasPermission } from "@/lib/permissions/merge";
-import { MENU_SCOPES } from "@/lib/permissions/constants";
-import { isAdminAreaRole, isNormalAdminAreaRole } from "@/lib/permissions/role-hierarchy";
-import type { PermissionMap, RoleSlug } from "@/lib/permissions/constants";
+import { MENU_SCOPES, USER_LAYERS } from "@/lib/permissions/constants";
+import { isAdminAreaLayer, isCompanyAdminAreaLayer } from "@/lib/permissions/role-hierarchy";
+import type { PermissionMap, UserLayer } from "@/lib/permissions/constants";
 import type { MenuDocument } from "@/models/menu.model";
 
 export type MenuTreeNode = MenuDocument & { children: MenuTreeNode[] };
@@ -63,7 +63,9 @@ export async function validateMenuHierarchy(params: {
 
 /**
  * Builds the tree of menus the current user is actually allowed to see:
- * - inactive menus are always excluded
+ * - inactive/hidden menus are excluded - EXCEPT for Super Admin, who has a
+ *   complete system-level override and always sees every menu regardless of
+ *   `isActive`/`isVisible` (additional RBAC requirement #5/#6)
  * - a scoped menu (requirement #7) is only visible to a user whose role is
  *   in that scope's dashboard - Super Admin sees both scopes (requirement
  *   #2 "can access every menu ... regardless of normal permission
@@ -78,18 +80,19 @@ export function buildEffectiveMenuTree(
   allMenus: MenuDocument[],
   permissions: PermissionMap,
   isSuperAdmin: boolean,
-  roleSlugs: RoleSlug[] = []
+  userLayer: UserLayer = USER_LAYERS.CUSTOMER
 ): MenuTreeNode[] {
   const canSeeScope = (m: MenuDocument) => {
     if (isSuperAdmin || !m.scope) return true;
-    if (m.scope === MENU_SCOPES.SUPER_ADMIN_ADMIN) return isAdminAreaRole(roleSlugs);
-    if (m.scope === MENU_SCOPES.NORMAL_ADMIN_MODERATOR) return isNormalAdminAreaRole(roleSlugs);
+    if (m.scope === MENU_SCOPES.SUPER_ADMIN_ADMIN) return isAdminAreaLayer(userLayer);
+    if (m.scope === MENU_SCOPES.COMPANY_ADMIN_MODERATOR) return isCompanyAdminAreaLayer(userLayer);
     return true;
   };
 
-  const active = allMenus.filter((m) => m.isActive && m.isVisible && canSeeScope(m));
+  const active = allMenus.filter((m) => (isSuperAdmin || (m.isActive && m.isVisible)) && canSeeScope(m));
 
-  const canSee = (m: MenuDocument) => isSuperAdmin || !m.resourceKey || hasPermission(permissions, m.resourceKey, "view");
+  const canSee = (m: MenuDocument) =>
+    isSuperAdmin || !m.resourceKey || hasPermission(permissions, m.resourceKey, "view");
 
   const byParent = new Map<string, MenuDocument[]>();
   for (const m of active) {
@@ -106,7 +109,12 @@ export function buildEffectiveMenuTree(
       const children = build(String(menu._id));
       const directlyAccessible = canSee(menu) && Boolean(menu.route);
       if (directlyAccessible || children.length > 0) {
-        result.push({ ...menu, children } as MenuTreeNode);
+        // Null out `route` when the node survives only because a child is
+        // still visible - its OWN page isn't actually reachable, so callers
+        // (the sidebar's Link-vs-toggle-button choice, and the client-side
+        // route-revalidation in use-permission-sync.ts) must never treat it
+        // as a live route just because the raw Menu document had one.
+        result.push({ ...menu, route: directlyAccessible ? menu.route : null, children } as MenuTreeNode);
       }
     }
     return result;

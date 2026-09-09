@@ -41,6 +41,20 @@ export const userRepository = {
     return UserModel.findByIdAndUpdate(id, { $inc: { tokenVersion: 1 } }, { new: true }).exec();
   },
 
+  async incrementPermissionVersion(id: string) {
+    return UserModel.findByIdAndUpdate(id, { $inc: { permissionVersion: 1 } }, { new: true }).exec();
+  },
+
+  /** Bumps every user holding `roleId` - used when a Role's own permissions/isActive change. */
+  async incrementPermissionVersionForRole(roleId: string) {
+    return UserModel.updateMany({ roles: roleId }, { $inc: { permissionVersion: 1 } }).exec();
+  },
+
+  /** Bumps every user - used when a Menu's isActive/scope/resourceKey changes, since menu visibility depends on role+scope for everyone. */
+  async incrementPermissionVersionForAll() {
+    return UserModel.updateMany({}, { $inc: { permissionVersion: 1 } }).exec();
+  },
+
   async updatePermissionOverrides(id: string, permissionOverrides: Record<string, Record<string, boolean>>) {
     return UserModel.findByIdAndUpdate(id, { permissionOverrides }, { new: true }).populate("roles").exec();
   },

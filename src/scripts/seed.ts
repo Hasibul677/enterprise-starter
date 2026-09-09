@@ -11,11 +11,13 @@ import { MenuModel } from "@/models/menu.model";
 import { hashPassword } from "@/lib/security/password";
 import {
   ROLE_SLUGS,
+  USER_LAYERS,
   DEFAULT_USER_ROLE_SLUG,
   CORE_RESOURCES,
   MENU_SCOPES,
   NORMAL_USER_DEFAULT_RESOURCE_PERMISSIONS,
 } from "@/lib/permissions/constants";
+import type { UserLayer } from "@/lib/permissions/constants";
 
 /** Dev-only password shared by the 4 non-super-admin demo accounts - see README "Demo credentials". */
 const DEMO_PASSWORD = "Passw0rd!123";
@@ -37,22 +39,42 @@ async function main() {
   if (legacyViewer && !existingCustomerRole) {
     legacyViewer.slug = ROLE_SLUGS.CUSTOMER;
     legacyViewer.name = "Customer";
-    await legacyViewer.save();
+    // The roleSeeds upsert loop below fully repopulates every required
+    // field (including the newer userLayer) right after this - skip full
+    // validation here so a pre-userLayer document doesn't fail on a field
+    // this migration step was never responsible for setting.
+    await legacyViewer.save({ validateBeforeSave: false });
     console.log("Migrated legacy 'viewer' role to 'customer'.");
   }
 
-  // --- The 5 fixed roles the RBAC hierarchy is built around (see
-  // src/lib/permissions/role-hierarchy.ts). All isSystem: true - "exactly 5
-  // roles must exist" (requirement #20), so none can be deleted/deactivated.
-  // Defaults are deliberately modest for ADMIN/NORMAL_ADMIN/MODERATOR
+  // --- Migrate the pre-userLayer "normal-admin" role slug to "company-admin"
+  // in place (same _id, so every existing user/menu reference stays valid) -
+  // NORMAL_ADMIN was renamed to COMPANY_ADMIN when the fixed user-layer
+  // concept was introduced (see role-hierarchy.ts doc comment).
+  const legacyNormalAdmin = await RoleModel.findOne({ slug: "normal-admin" });
+  const existingCompanyAdminRole = await RoleModel.findOne({ slug: ROLE_SLUGS.COMPANY_ADMIN });
+  if (legacyNormalAdmin && !existingCompanyAdminRole) {
+    legacyNormalAdmin.slug = ROLE_SLUGS.COMPANY_ADMIN;
+    legacyNormalAdmin.name = "Company Admin";
+    await legacyNormalAdmin.save({ validateBeforeSave: false });
+    console.log("Migrated legacy 'normal-admin' role to 'company-admin'.");
+  }
+
+  // --- The 5 seeded DEFAULT roles, one per fixed user layer (see
+  // src/lib/permissions/role-hierarchy.ts). All isSystem: true - none can be
+  // deleted/deactivated (requirement #20). SUPER_ADMIN/COMPANY_ADMIN can
+  // create unlimited ADDITIONAL roles targeting the applicable layers
+  // through the Roles admin UI - these 5 are only the always-present floor.
+  // Defaults are deliberately modest for ADMIN/COMPANY_ADMIN/MODERATOR
   // (requirement #12 "do not simply give ADMIN all Super Admin permissions")
-  // - a Super Admin/Normal Admin explicitly grants more via the Roles page
+  // - a Super Admin/Company Admin explicitly grants more via the Roles page
   // or a per-user permission override.
-  const roleSeeds = [
+  const roleSeeds: { slug: string; name: string; description: string; userLayer: UserLayer; permissions: Record<string, unknown> }[] = [
     {
       slug: ROLE_SLUGS.SUPER_ADMIN,
       name: "Super Admin",
       description: "Full system access. Bypasses standard permission checks.",
+      userLayer: USER_LAYERS.SUPER_ADMIN,
       permissions: {
         [CORE_RESOURCES.USERS]: fullPerms,
         [CORE_RESOURCES.ROLES]: fullPerms,
@@ -69,6 +91,7 @@ async function main() {
       slug: ROLE_SLUGS.ADMIN,
       name: "Admin",
       description: "Operates in the Super Admin / Admin area under explicitly assigned permissions.",
+      userLayer: USER_LAYERS.ADMIN,
       permissions: {
         [CORE_RESOURCES.USERS]: { ...empty, view: true, edit: true },
         [CORE_RESOURCES.COMMENTS]: { ...empty, view: true, edit: true },
@@ -76,24 +99,30 @@ async function main() {
       },
     },
     {
-      slug: ROLE_SLUGS.NORMAL_ADMIN,
-      name: "Normal Admin",
-      description: "Manages its own Moderator users in a scope separate from Super Admin / Admin.",
+      slug: ROLE_SLUGS.COMPANY_ADMIN,
+      name: "Company Admin",
+      description: "Manages its own Moderator users and their roles, in a scope separate from Super Admin / Admin.",
+      userLayer: USER_LAYERS.COMPANY_ADMIN,
       permissions: {
         [CORE_RESOURCES.USERS]: { ...empty, view: true, add: true, edit: true },
         [CORE_RESOURCES.COMMENTS]: { ...empty, view: true, edit: true, delete: true },
         [CORE_RESOURCES.REPORTS]: viewOnly,
         [CORE_RESOURCES.DASHBOARD]: viewOnly,
-        // Core to being a Normal Admin, not something extra to grant -
+        // Core to being a Company Admin, not something extra to grant -
         // mirrors Super Admin's inherent (bypassed) ability to assign
         // permissions to Admin (requirement #9).
         [CORE_RESOURCES.PERMISSIONS]: { ...empty, view: true, edit: true },
+        // Lets a Company Admin create/manage its own unlimited MODERATOR-
+        // layer roles (requirement #4) - scoped server-side to roles it
+        // owns via Role.managedBy (role.service.ts#createRole/canManageRole).
+        [CORE_RESOURCES.ROLES]: { ...empty, view: true, add: true, edit: true, delete: true },
       },
     },
     {
       slug: ROLE_SLUGS.MODERATOR,
       name: "Moderator",
-      description: "Operates in the Normal Admin / Moderator area under explicitly assigned permissions.",
+      description: "Operates in the Company Admin / Moderator area under explicitly assigned permissions.",
+      userLayer: USER_LAYERS.MODERATOR,
       permissions: {
         [CORE_RESOURCES.COMMENTS]: { ...empty, view: true, edit: true },
         [CORE_RESOURCES.REPORTS]: viewOnly,
@@ -104,6 +133,7 @@ async function main() {
       slug: ROLE_SLUGS.CUSTOMER,
       name: "Customer",
       description: "Default role granted to every public registration. Customer-level activities only.",
+      userLayer: USER_LAYERS.CUSTOMER,
       permissions: {
         [CORE_RESOURCES.USERS]: NORMAL_USER_DEFAULT_RESOURCE_PERMISSIONS,
         [CORE_RESOURCES.COMMENTS]: { ...empty, view: true, add: true },
@@ -116,26 +146,51 @@ async function main() {
   for (const seed of roleSeeds) {
     roleDocs[seed.slug] = await RoleModel.findOneAndUpdate(
       { slug: seed.slug },
-      { name: seed.name, slug: seed.slug, description: seed.description, isSystem: true, isActive: true, permissions: seed.permissions },
+      {
+        name: seed.name,
+        slug: seed.slug,
+        description: seed.description,
+        userLayer: seed.userLayer,
+        managedBy: null,
+        isSystem: true,
+        isActive: true,
+        permissions: seed.permissions,
+      },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
   }
   console.log("Seeded roles:", Object.keys(roleDocs).join(", "));
+
+  // --- Backfill User.userLayer on any pre-existing user (created before
+  // this field existed) by deriving it from their current role(s) - the
+  // same "every role targets one shared layer" invariant the app now
+  // enforces going forward (user.service.ts#resolveRolesLayer).
+  const usersMissingLayer = await UserModel.find({ userLayer: { $exists: false } }).populate("roles");
+  for (const u of usersMissingLayer) {
+    const layers = new Set(((u.roles ?? []) as unknown as { userLayer?: UserLayer }[]).map((r) => r.userLayer).filter(Boolean));
+    u.userLayer = (layers.size === 1 ? Array.from(layers)[0] : USER_LAYERS.CUSTOMER) as never;
+    await u.save({ validateBeforeSave: false });
+  }
+  if (usersMissingLayer.length > 0) {
+    console.log(`Backfilled userLayer on ${usersMissingLayer.length} pre-existing user(s).`);
+  }
 
   // --- Sanity check: DEFAULT_USER_ROLE_SLUG must exist before registration works.
   if (DEFAULT_USER_ROLE_SLUG !== ROLE_SLUGS.CUSTOMER) {
     throw new Error("DEFAULT_USER_ROLE_SLUG is out of sync with ROLE_SLUGS.CUSTOMER.");
   }
 
-  // --- 5 demo users, one per role (requirement #11). Super Admin keeps the
-  // existing env-driven contract; the other 4 are dev-only fixed accounts
-  // sharing DEMO_PASSWORD (documented in README). All idempotent by email.
+  // --- 5 demo users, one per layer (requirement #1/#11). Super Admin keeps
+  // the existing env-driven contract; the other 4 are dev-only fixed
+  // accounts sharing DEMO_PASSWORD (documented in README). All idempotent
+  // by email.
   async function ensureUser(params: {
     email: string;
     password: string;
     firstName: string;
     lastName: string;
     roleSlug: string;
+    userLayer: UserLayer;
     managedBy?: mongoose.Types.ObjectId | null;
   }) {
     const email = params.email.toLowerCase();
@@ -159,6 +214,7 @@ async function main() {
       email,
       passwordHash,
       roles: [roleDocs[params.roleSlug]._id],
+      userLayer: params.userLayer,
       managedBy: params.managedBy ?? null,
       status: "ACTIVE",
       emailVerified: true,
@@ -173,6 +229,7 @@ async function main() {
     firstName: "Super",
     lastName: "Admin",
     roleSlug: ROLE_SLUGS.SUPER_ADMIN,
+    userLayer: USER_LAYERS.SUPER_ADMIN,
   });
   void superAdmin;
 
@@ -184,18 +241,20 @@ async function main() {
     firstName: "Demo",
     lastName: "Admin",
     roleSlug: ROLE_SLUGS.ADMIN,
+    userLayer: USER_LAYERS.ADMIN,
   });
 
-  const normalAdmin = await ensureUser({
-    email: "normaladmin@example.com",
+  const companyAdmin = await ensureUser({
+    email: "companyadmin@example.com",
     password: DEMO_PASSWORD,
     firstName: "Demo",
-    lastName: "NormalAdmin",
-    roleSlug: ROLE_SLUGS.NORMAL_ADMIN,
+    lastName: "CompanyAdmin",
+    roleSlug: ROLE_SLUGS.COMPANY_ADMIN,
+    userLayer: USER_LAYERS.COMPANY_ADMIN,
   });
 
-  // Ownership: this demo moderator is managed by the demo normal-admin
-  // (requirement #10) - NORMAL_ADMIN A/B ownership is what
+  // Ownership: this demo moderator is managed by the demo company admin
+  // (requirement #10) - COMPANY_ADMIN A/B ownership is what
   // canManageTargetUser() enforces at request time.
   await ensureUser({
     email: "moderator@example.com",
@@ -203,7 +262,8 @@ async function main() {
     firstName: "Demo",
     lastName: "Moderator",
     roleSlug: ROLE_SLUGS.MODERATOR,
-    managedBy: normalAdmin._id as unknown as mongoose.Types.ObjectId,
+    userLayer: USER_LAYERS.MODERATOR,
+    managedBy: companyAdmin._id as unknown as mongoose.Types.ObjectId,
   });
 
   await ensureUser({
@@ -212,130 +272,46 @@ async function main() {
     firstName: "Demo",
     lastName: "Customer",
     roleSlug: ROLE_SLUGS.CUSTOMER,
+    userLayer: USER_LAYERS.CUSTOMER,
   });
 
-  // --- SUPER_ADMIN / ADMIN scoped menu (requirement #7)
-  const userMgmt = await MenuModel.findOneAndUpdate(
+  // --- SUPER_ADMIN / ADMIN scoped menu (requirement #7). Users, Roles, and
+  // Menus (plus the old standalone Permission Management overview) are now
+  // consolidated into a single layer-tabbed management area - see
+  // src/components/management/management-view.tsx - rather than 5 separate
+  // nav entries. Repurposing the existing "user-management" key (rather than
+  // creating a new one) means `yarn seed` updates it in place for anyone who
+  // already has it in their database.
+  await MenuModel.findOneAndUpdate(
     { key: "user-management" },
     {
-      name: "User Management",
+      name: "Management",
       key: "user-management",
-      label: "User Management",
-      slug: "user-management",
+      label: "Management",
+      slug: "management",
+      route: "/admin/management",
       parentId: null,
       level: 1,
       sortOrder: 1,
       isActive: true,
       isVisible: true,
       icon: "users",
-      scope: MENU_SCOPES.SUPER_ADMIN_ADMIN,
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
-
-  const usersMenu = await MenuModel.findOneAndUpdate(
-    { key: "users" },
-    {
-      name: "Users",
-      key: "users",
-      label: "Users",
-      slug: "users",
-      parentId: userMgmt._id,
-      level: 2,
-      sortOrder: 1,
-      isActive: true,
-      isVisible: true,
-      icon: "user",
+      // Gated on USERS (not a 3-way OR of users/roles/menus, which Menu's
+      // single resourceKey field can't express) - the Roles/Menus sections
+      // inside the page are independently permission-gated regardless, same
+      // as every row-level action elsewhere in this app.
       resourceKey: CORE_RESOURCES.USERS,
       scope: MENU_SCOPES.SUPER_ADMIN_ADMIN,
     },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 
-  await MenuModel.findOneAndUpdate(
-    { key: "user-list" },
-    {
-      name: "User List",
-      key: "user-list",
-      label: "User List",
-      slug: "user-list",
-      route: "/admin/users",
-      parentId: usersMenu._id,
-      level: 3,
-      sortOrder: 1,
-      isActive: true,
-      isVisible: true,
-      icon: "list",
-      resourceKey: CORE_RESOURCES.USERS,
-      scope: MENU_SCOPES.SUPER_ADMIN_ADMIN,
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
-
-  await MenuModel.findOneAndUpdate(
-    { key: "roles" },
-    {
-      name: "Roles",
-      key: "roles",
-      label: "Roles",
-      slug: "roles",
-      route: "/admin/roles",
-      parentId: userMgmt._id,
-      level: 2,
-      sortOrder: 2,
-      isActive: true,
-      isVisible: true,
-      icon: "shield",
-      resourceKey: CORE_RESOURCES.ROLES,
-      scope: MENU_SCOPES.SUPER_ADMIN_ADMIN,
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
-
-  await MenuModel.findOneAndUpdate(
-    { key: "menus" },
-    {
-      name: "Menus",
-      key: "menus",
-      label: "Menus",
-      slug: "menus",
-      route: "/admin/menus",
-      parentId: null,
-      level: 1,
-      sortOrder: 2,
-      isActive: true,
-      isVisible: true,
-      icon: "list-tree",
-      resourceKey: CORE_RESOURCES.MENUS,
-      scope: MENU_SCOPES.SUPER_ADMIN_ADMIN,
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
-
-  await MenuModel.findOneAndUpdate(
-    { key: "permission-management" },
-    {
-      name: "Permission Management",
-      key: "permission-management",
-      label: "Permission Management",
-      slug: "permission-management",
-      route: "/admin/permissions",
-      parentId: null,
-      level: 1,
-      sortOrder: 3,
-      isActive: true,
-      isVisible: true,
-      icon: "key",
-      // Gated on ROLES, not PERMISSIONS: the page it links to
-      // (/admin/permissions) reads from GET /api/roles, which is itself
-      // gated on ROLES view - keeping the menu's resourceKey in sync with
-      // what the page actually calls avoids a visible-but-403 or
-      // hidden-but-reachable mismatch.
-      resourceKey: CORE_RESOURCES.ROLES,
-      scope: MENU_SCOPES.SUPER_ADMIN_ADMIN,
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
+  // Retire the now-obsolete child/sibling menu entries this consolidation
+  // replaces - findOneAndUpdate's upsert-by-key never deletes a stale key on
+  // its own, so a one-time cleanup is needed to avoid dead sidebar links.
+  await MenuModel.deleteMany({
+    key: { $in: ["users", "user-list", "roles", "menus", "permission-management", "moderators", "moderator-list", "moderator-roles"] },
+  });
 
   await MenuModel.findOneAndUpdate(
     { key: "system-settings" },
@@ -357,61 +333,30 @@ async function main() {
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 
-  // --- NORMAL_ADMIN / MODERATOR scoped menu (requirement #7) - a separate
-  // 3-level tree from the one above, per requirement #4.
-  const moderatorMgmt = await MenuModel.findOneAndUpdate(
+  // --- COMPANY_ADMIN / MODERATOR scoped menu (requirement #7) - a separate
+  // tree from the one above, per requirement #4. Moderators + Roles are
+  // consolidated the same way into /company-admin/management (no Menus
+  // section on this side - see management-view.tsx for why).
+  await MenuModel.findOneAndUpdate(
     { key: "moderator-management" },
     {
-      name: "Moderator Management",
+      name: "Management",
       key: "moderator-management",
-      label: "Moderator Management",
+      label: "Management",
+      // Distinct from the admin-side "management" slug: both are top-level
+      // (parentId: null) entries, and Menu.slug is only unique among
+      // siblings (see the unique compound index on menu.model.ts) - sharing
+      // "management" across these two roots collides on that index.
       slug: "moderator-management",
+      route: "/company-admin/management",
       parentId: null,
       level: 1,
       sortOrder: 1,
       isActive: true,
       isVisible: true,
       icon: "users",
-      scope: MENU_SCOPES.NORMAL_ADMIN_MODERATOR,
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
-
-  const moderatorsMenu = await MenuModel.findOneAndUpdate(
-    { key: "moderators" },
-    {
-      name: "Moderators",
-      key: "moderators",
-      label: "Moderators",
-      slug: "moderators",
-      parentId: moderatorMgmt._id,
-      level: 2,
-      sortOrder: 1,
-      isActive: true,
-      isVisible: true,
-      icon: "user",
       resourceKey: CORE_RESOURCES.USERS,
-      scope: MENU_SCOPES.NORMAL_ADMIN_MODERATOR,
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
-
-  await MenuModel.findOneAndUpdate(
-    { key: "moderator-list" },
-    {
-      name: "Moderator List",
-      key: "moderator-list",
-      label: "Moderator List",
-      slug: "moderator-list",
-      route: "/normal-admin/users",
-      parentId: moderatorsMenu._id,
-      level: 3,
-      sortOrder: 1,
-      isActive: true,
-      isVisible: true,
-      icon: "list",
-      resourceKey: CORE_RESOURCES.USERS,
-      scope: MENU_SCOPES.NORMAL_ADMIN_MODERATOR,
+      scope: MENU_SCOPES.COMPANY_ADMIN_MODERATOR,
     },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
@@ -423,7 +368,7 @@ async function main() {
       key: "comments",
       label: "Comments",
       slug: "comments",
-      route: "/normal-admin/comments",
+      route: "/company-admin/comments",
       parentId: null,
       level: 1,
       sortOrder: 2,
@@ -431,7 +376,7 @@ async function main() {
       isVisible: true,
       icon: "message-square",
       resourceKey: CORE_RESOURCES.COMMENTS,
-      scope: MENU_SCOPES.NORMAL_ADMIN_MODERATOR,
+      scope: MENU_SCOPES.COMPANY_ADMIN_MODERATOR,
     },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
@@ -443,7 +388,7 @@ async function main() {
       key: "reports",
       label: "Reports",
       slug: "reports",
-      route: "/normal-admin/reports",
+      route: "/company-admin/reports",
       parentId: null,
       level: 1,
       sortOrder: 3,
@@ -451,7 +396,7 @@ async function main() {
       isVisible: true,
       icon: "bar-chart",
       resourceKey: CORE_RESOURCES.REPORTS,
-      scope: MENU_SCOPES.NORMAL_ADMIN_MODERATOR,
+      scope: MENU_SCOPES.COMPANY_ADMIN_MODERATOR,
     },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );

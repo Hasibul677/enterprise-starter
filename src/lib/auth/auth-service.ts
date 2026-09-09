@@ -3,9 +3,17 @@ import { roleRepository } from "@/repositories/role.repository";
 import { auditLogRepository } from "@/repositories/audit-log.repository";
 import { hashPassword, verifyPassword, isPasswordStrongEnough } from "@/lib/security/password";
 import { issueTokenPair, revokeSession } from "@/lib/auth/session-service";
-import { ValidationError, AuthenticationError, AccountStatusError, ConflictError, AuthorizationError, NotFoundError } from "@/lib/errors/app-error";
-import { DEFAULT_USER_ROLE_SLUG, ROLE_SLUGS } from "@/lib/permissions/constants";
-import { getRoleSlugs, getDefaultLandingRoute, getImpersonationIneligibleReason } from "@/lib/permissions/role-hierarchy";
+import {
+  ValidationError,
+  AuthenticationError,
+  AccountStatusError,
+  ConflictError,
+  AuthorizationError,
+  NotFoundError,
+} from "@/lib/errors/app-error";
+import { DEFAULT_USER_ROLE_SLUG, USER_LAYERS } from "@/lib/permissions/constants";
+import { getDefaultLandingRoute, getImpersonationIneligibleReason } from "@/lib/permissions/role-hierarchy";
+import type { UserLayer } from "@/lib/permissions/constants";
 import type { ResolvedAccess } from "@/lib/auth/current-user";
 import type { UserDocument } from "@/models/user.model";
 
@@ -30,7 +38,11 @@ export async function registerUser(input: RegisterInput) {
 
   if (!isPasswordStrongEnough(input.password)) {
     throw new ValidationError("Password does not meet the minimum strength requirements.", [
-      { field: "password", code: "WEAK_PASSWORD", message: "Use at least 8 characters with upper, lower, and a digit." },
+      {
+        field: "password",
+        code: "WEAK_PASSWORD",
+        message: "Use at least 8 characters with upper, lower, and a digit.",
+      },
     ]);
   }
 
@@ -46,6 +58,7 @@ export async function registerUser(input: RegisterInput) {
     email: input.email.toLowerCase().trim(),
     passwordHash,
     roles: [defaultRole._id] as unknown as UserDocument["roles"],
+    userLayer: USER_LAYERS.CUSTOMER,
     status: "ACTIVE",
   });
 
@@ -131,13 +144,16 @@ export async function impersonateUser(params: {
   const target = await userRepository.findById(targetUserId);
   if (!target) throw new NotFoundError("User not found.");
 
-  const targetSlugs = getRoleSlugs((target.roles ?? []) as unknown as { slug: string; isActive: boolean }[]);
+  const targetLayer = target.userLayer as UserLayer;
 
   const ineligibleReason = getImpersonationIneligibleReason({
     actorUserId: actorId,
+    actorLayer: access.userLayer,
+    isSuperAdmin: access.isSuperAdmin,
     targetUserId,
-    targetSlugs,
+    targetUserLayer: targetLayer,
     targetStatus: target.status,
+    targetManagedBy: target.managedBy ? String(target.managedBy) : null,
   });
   if (ineligibleReason) {
     throw new AuthorizationError(ineligibleReason);
@@ -157,20 +173,24 @@ export async function impersonateUser(params: {
     action: "IMPERSONATION_STARTED",
     entityType: "User",
     entityId: targetUserId,
-    metadata: { targetEmail: target.email, targetRoles: targetSlugs, sessionId },
+    metadata: { targetEmail: target.email, targetUserLayer: targetLayer, sessionId },
   });
 
-  const redirectTo = getDefaultLandingRoute({ isSuperAdmin: false, roleSlugs: targetSlugs });
+  const redirectTo = getDefaultLandingRoute({ isSuperAdmin: false, userLayer: targetLayer });
 
   return { accessToken, refreshToken, redirectTo, target };
 }
 
 /**
- * Ends an impersonation session and restores the original Super Admin's
- * session (requirement #21 "Return to Super Admin") - no password
- * re-entry: the Super Admin's identity comes from the impersonation
- * token's own signed `impersonatedBy` claim, not from anything client-
- * supplied, and is re-verified fresh against the DB before being trusted.
+ * Ends an impersonation session and restores the original actor's session
+ * (requirement #21 "Return to Super Admin", extended to COMPANY_ADMIN ->
+ * MODERATOR account-access) - no password re-entry: the original actor's
+ * identity comes from the impersonation token's own signed `impersonatedBy`
+ * claim, not from anything client-supplied, and is re-verified fresh
+ * against the DB before being trusted. The original actor must still be
+ * someone genuinely allowed to impersonate at all (Super Admin or Company
+ * Admin) and active - if their own authority was revoked while they were
+ * impersonating, returning is refused rather than silently restoring it.
  */
 export async function endImpersonation(params: { access: ResolvedAccess }) {
   const { access } = params;
@@ -179,11 +199,16 @@ export async function endImpersonation(params: { access: ResolvedAccess }) {
     throw new ValidationError("This session is not an impersonation session.");
   }
 
-  const superAdmin = await userRepository.findById(access.impersonatedBy);
-  const superAdminSlugs = superAdmin ? getRoleSlugs((superAdmin.roles ?? []) as unknown as { slug: string; isActive: boolean }[]) : [];
-  if (!superAdmin || !superAdminSlugs.includes(ROLE_SLUGS.SUPER_ADMIN) || superAdmin.status !== "ACTIVE") {
+  const originalActor = await userRepository.findById(access.impersonatedBy);
+  const originalActorLayer = originalActor?.userLayer as UserLayer | undefined;
+  const originalActorIsSuperAdmin = originalActorLayer === USER_LAYERS.SUPER_ADMIN;
+  const canReturnToActor =
+    originalActor &&
+    originalActor.status === "ACTIVE" &&
+    (originalActorIsSuperAdmin || originalActorLayer === USER_LAYERS.COMPANY_ADMIN);
+  if (!originalActor || !canReturnToActor) {
     throw new AuthenticationError(
-      "The original Super Admin account is no longer valid. Please log in again.",
+      "The original account is no longer valid. Please log in again.",
       "SUPER_ADMIN_SESSION_INVALID"
     );
   }
@@ -191,17 +216,22 @@ export async function endImpersonation(params: { access: ResolvedAccess }) {
   await revokeSession(access.sessionId, "IMPERSONATION_ENDED");
 
   const { accessToken, refreshToken } = await issueTokenPair({
-    userId: String(superAdmin._id),
-    tokenVersion: superAdmin.tokenVersion,
+    userId: String(originalActor._id),
+    tokenVersion: originalActor.tokenVersion,
   });
 
   await auditLogRepository.record({
-    actorUserId: String(superAdmin._id),
+    actorUserId: String(originalActor._id),
     targetUserId: String(access.user._id),
     action: "IMPERSONATION_ENDED",
     entityType: "User",
     entityId: String(access.user._id),
   });
 
-  return { accessToken, refreshToken };
+  const redirectTo = getDefaultLandingRoute({
+    isSuperAdmin: originalActorIsSuperAdmin,
+    userLayer: originalActorLayer as UserLayer,
+  });
+
+  return { accessToken, refreshToken, redirectTo };
 }

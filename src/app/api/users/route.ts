@@ -12,8 +12,8 @@ export async function GET(request: NextRequest) {
   try {
     await connectToDatabase();
     const access = await resolveCurrentAccess();
-    // Both admin-area (SUPER_ADMIN/ADMIN) and normal-admin-area
-    // (NORMAL_ADMIN/MODERATOR) actors call this same endpoint - listUsers()
+    // Both admin-area (SUPER_ADMIN/ADMIN) and company-admin-area
+    // (COMPANY_ADMIN/MODERATOR) actors call this same endpoint - listUsers()
     // scopes the result set to what each is actually allowed to see.
     requireAnyAdminAreaAccess(access);
     requirePermission(access, CORE_RESOURCES.USERS, "view");

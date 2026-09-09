@@ -13,7 +13,7 @@ export const menuUpdateSchema = z.object({
   resourceKey: z.string().trim().max(100).nullable().optional(),
   // Optional on update (an existing menu already has one), but never
   // clearable back to null once set - see requirement #7.
-  scope: z.enum([MENU_SCOPES.SUPER_ADMIN_ADMIN, MENU_SCOPES.NORMAL_ADMIN_MODERATOR]).optional(),
+  scope: z.enum([MENU_SCOPES.SUPER_ADMIN_ADMIN, MENU_SCOPES.COMPANY_ADMIN_MODERATOR]).optional(),
 });
 
 export type MenuUpdateInput = z.infer<typeof menuUpdateSchema>;

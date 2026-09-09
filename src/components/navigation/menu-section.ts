@@ -3,7 +3,7 @@ import type { MenuTreeNode } from "@/stores/auth-store";
 /**
  * Partitions the single permission-and-scope-filtered menu tree (from
  * GET /api/auth/me) into whichever of the 3 dashboard sections is currently
- * on screen (`/admin/**`, `/normal-admin/**`, or everything else i.e.
+ * on screen (`/admin/**`, `/company-admin/**`, or everything else i.e.
  * `/dashboard/**`) - so each dashboard tree renders completely separate menu
  * lists instead of one side just seeing a superset of another's items. This
  * is presentation-only partitioning on top of the server's own permission +
@@ -11,13 +11,13 @@ import type { MenuTreeNode } from "@/stores/auth-store";
  * anything a user couldn't already see/reach.
  */
 const ADMIN_ROUTE_PREFIX = "/admin";
-const NORMAL_ADMIN_ROUTE_PREFIX = "/normal-admin";
+const COMPANY_ADMIN_ROUTE_PREFIX = "/company-admin";
 
-export type MenuSection = "admin" | "normal-admin" | "dashboard";
+export type MenuSection = "admin" | "company-admin" | "dashboard";
 
 function sectionOf(route: string): MenuSection {
   if (route === ADMIN_ROUTE_PREFIX || route.startsWith(`${ADMIN_ROUTE_PREFIX}/`)) return "admin";
-  if (route === NORMAL_ADMIN_ROUTE_PREFIX || route.startsWith(`${NORMAL_ADMIN_ROUTE_PREFIX}/`)) return "normal-admin";
+  if (route === COMPANY_ADMIN_ROUTE_PREFIX || route.startsWith(`${COMPANY_ADMIN_ROUTE_PREFIX}/`)) return "company-admin";
   return "dashboard";
 }
 

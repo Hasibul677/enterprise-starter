@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { defineConfig, devices } from "@playwright/test";
 
 /**
@@ -8,6 +9,11 @@ import { defineConfig, devices } from "@playwright/test";
  * written and typechecked but have not been executed here. Run
  * `npx playwright install --with-deps` once on your own machine, then
  * `yarn test:e2e`.
+ *
+ * The `dotenv/config` import above is required because specs read
+ * `process.env.SUPER_ADMIN_EMAIL`/`SUPER_ADMIN_PASSWORD` directly (see
+ * rbac.spec.ts) - unlike `next dev`, the standalone `playwright test`
+ * process never loads `.env` on its own.
  */
 export default defineConfig({
   testDir: "./tests/e2e",

@@ -100,30 +100,56 @@ Client/UI
 - Multi-role merge is UNION/OR across **active** roles only
   (`mergeRolePermissions()`). Do not introduce deny-permissions without
   revisiting this algorithm and its tests.
-- The app has a fixed 5-role hierarchy (`ROLE_SLUGS` in
-  `src/lib/permissions/constants.ts`): `SUPER_ADMIN -> {ADMIN, NORMAL_ADMIN ->
-  MODERATOR}`, plus an independent `CUSTOMER`. `src/lib/permissions/role-hierarchy.ts`
-  is the single source of truth for role-hierarchy authority - who can
-  create/manage which role (`CREATABLE_ROLES_BY`, `MANAGEABLE_TARGET_ROLES_BY`)
-  and who can grant which permission to whom (`PERMISSION_GRANTERS`,
-  `GRANTABLE_RESOURCES_BY`). Extend these tables for new authority rules;
-  never hardcode a role-slug check somewhere else.
+- **User layer vs Role are separate concepts.** `USER_LAYERS` (in
+  `src/lib/permissions/constants.ts`) is the fixed, structural 5-layer
+  hierarchy - `SUPER_ADMIN -> {ADMIN, COMPANY_ADMIN -> MODERATOR}`, plus an
+  independent `CUSTOMER` - stored on `User.userLayer` and NEVER derived from
+  which role(s) a user holds. `Role` documents are dynamic, unlimited
+  permission bundles that each target exactly one layer (`Role.userLayer`,
+  immutable after creation); creating a role never creates a new layer, and
+  a role's name/slug/id carries no hierarchy authority. Every authority
+  check in `src/lib/permissions/role-hierarchy.ts` takes a `UserLayer`
+  scalar, never a role slug/array - who can create/manage which layer
+  (`CREATABLE_LAYERS_BY`, `MANAGEABLE_TARGET_LAYERS_BY`), which layer a
+  granter may grant permissions to (`PERMISSION_GRANTERS`,
+  `GRANTABLE_RESOURCES_BY`), which layer SUPER_ADMIN/COMPANY_ADMIN may
+  create a *role* for (`CREATABLE_ROLE_LAYERS_BY`), and who may edit/deactivate
+  a given role (`canManageRole()`, using `Role.managedBy` ownership).
+  `ROLE_SLUGS` still exists but only identifies the 5 seeded *default* roles
+  (e.g. for public registration) - extend these tables for new authority
+  rules; never hardcode a role-slug/name check anywhere for a hierarchy
+  decision.
+- SUPER_ADMIN can create additional roles targeting `ADMIN`/`COMPANY_ADMIN`/
+  `CUSTOMER`; a `COMPANY_ADMIN` can create unlimited additional roles, but
+  only ever targeting `MODERATOR`, and only for itself (`Role.managedBy` set
+  to its own user id) - a peer `COMPANY_ADMIN` never sees or can assign them
+  (`role.service.ts#listRolesForActor`/`createRole`). Deactivating a
+  *custom* (non-`isSystem`) role is allowed even while users hold it - the
+  live permission-sync (`permissionVersion`, see below) degrades them
+  gracefully; the 5 `isSystem` default roles remain undeletable/undeactivatable
+  regardless of assignment.
 - `/admin/**` is the shared SUPER_ADMIN/ADMIN dashboard tree
-  (`requireAdminAreaAccess()`/`requireAdminAreaPage()`); `/normal-admin/**`
-  is the shared NORMAL_ADMIN/MODERATOR tree
-  (`requireNormalAdminAreaAccess()`/`requireNormalAdminAreaPage()`),
+  (`requireAdminAreaAccess()`/`requireAdminAreaPage()`); `/company-admin/**`
+  is the shared COMPANY_ADMIN/MODERATOR tree
+  (`requireCompanyAdminAreaAccess()`/`requireCompanyAdminAreaPage()`),
   completely separate menus/routes from `/admin/**`. Both are additionally
   gated by ordinary `requirePermission()` for the specific action - the area
   guard only proves the actor belongs in that dashboard at all.
-- `User.managedBy` records NORMAL_ADMIN -> MODERATOR ownership (who created/
+- `User.managedBy` records COMPANY_ADMIN -> MODERATOR ownership (who created/
   manages that moderator); `User.permissionOverrides` is a per-user
   `PermissionMap` unioned on top of the role-derived baseline the same way
   multiple roles union - see `current-user.ts`. Both are enforced via
   `canManageTargetUser()`/`canGrantPermissionOverride()`, never inferred.
-- `Menu.scope` (`MENU_SCOPES.SUPER_ADMIN_ADMIN` / `NORMAL_ADMIN_MODERATOR`)
+- `Menu.scope` (`MENU_SCOPES.SUPER_ADMIN_ADMIN` / `COMPANY_ADMIN_MODERATOR`)
   is required on every menu created through the Menu admin UI and filters
   `buildEffectiveMenuTree()` in addition to the existing resourceKey
   permission check.
+- `User.permissionVersion` is bumped whenever authorization state affecting
+  that user changes (own status/roles/overrides, or a role/menu it depends
+  on) - see `use-permission-sync.ts` (client poll) and the
+  `incrementPermissionVersion*` calls in `role.service.ts`/`menu.service.ts`/
+  `user.service.ts`. Never repurpose `tokenVersion` for this - that one
+  forces a full logout, this one only refreshes cached permissions/menus.
 
 ## Component rules
 

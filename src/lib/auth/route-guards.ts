@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { resolveCurrentAccess, type ResolvedAccess } from "./current-user";
-import { isAdminAreaRole, isNormalAdminAreaRole } from "@/lib/permissions/role-hierarchy";
+import { isAdminAreaLayer, isCompanyAdminAreaLayer } from "@/lib/permissions/role-hierarchy";
 
 /**
  * Server-side page guards for use in layout.tsx/page.tsx Server Components -
@@ -28,16 +28,16 @@ export async function requireSuperAdminPage(): Promise<ResolvedAccess> {
 /** Server-side gate for the shared SUPER_ADMIN/ADMIN dashboard tree (`/admin/**`). */
 export async function requireAdminAreaPage(): Promise<ResolvedAccess> {
   const access = await requireAuthenticatedPage();
-  if (!access.isSuperAdmin && !isAdminAreaRole(access.roleSlugs)) {
+  if (!access.isSuperAdmin && !isAdminAreaLayer(access.userLayer)) {
     redirect("/dashboard");
   }
   return access;
 }
 
-/** Server-side gate for the shared NORMAL_ADMIN/MODERATOR dashboard tree (`/normal-admin/**`). */
-export async function requireNormalAdminAreaPage(): Promise<ResolvedAccess> {
+/** Server-side gate for the shared COMPANY_ADMIN/MODERATOR dashboard tree (`/company-admin/**`). */
+export async function requireCompanyAdminAreaPage(): Promise<ResolvedAccess> {
   const access = await requireAuthenticatedPage();
-  if (!access.isSuperAdmin && !isNormalAdminAreaRole(access.roleSlugs)) {
+  if (!access.isSuperAdmin && !isCompanyAdminAreaLayer(access.userLayer)) {
     redirect("/dashboard");
   }
   return access;

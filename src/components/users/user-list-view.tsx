@@ -2,20 +2,19 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { Plus, Eye, Pencil } from "lucide-react";
-import { ContentContainer } from "@/components/layout/content-container";
-import { PageHeader } from "@/components/layout/page-header";
+import { Plus, Eye, Pencil, LogIn, Trash2 } from "lucide-react";
 import { SearchInput } from "@/components/ui/search-input";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumn } from "@/components/data-table/data-table";
 import { PermissionGuard } from "@/components/permission/permission-guard";
 import { DeleteButton } from "@/components/ui/delete-button";
-import { IconLink } from "@/components/ui/icon-link";
+import { RowActionsMenu } from "@/components/data-table/row-actions-menu";
+import { RowActionLink, RowActionButton } from "@/components/data-table/row-action-item";
 import { ImpersonateButton } from "@/components/users/impersonate-button";
 import { apiClient, ApiClientError } from "@/lib/api-client/api-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { getImpersonationIneligibleReason } from "@/lib/permissions/role-hierarchy";
-import type { RoleSlug } from "@/lib/permissions/constants";
+import { USER_LAYERS, type UserLayer } from "@/lib/permissions/constants";
 import type { PaginationMeta } from "@/lib/api/response";
 import { formatDate } from "@/lib/date/dayjs";
 
@@ -26,6 +25,8 @@ type UserRow = {
   email: string;
   status: string;
   createdAt: string;
+  userLayer: UserLayer;
+  managedBy: string | null;
   roles: { _id: string; name: string; slug: string }[];
 };
 
@@ -39,7 +40,7 @@ const statusStyles: Record<string, string> = {
 /**
  * Shared user-list table used by both the SUPER_ADMIN/ADMIN Users page
  * (`/admin/users`, scoped server-side to admins-may-see) and the
- * NORMAL_ADMIN/MODERATOR Moderators page (`/normal-admin/users`, scoped to
+ * COMPANY_ADMIN/MODERATOR Moderators page (`/company-admin/users`, scoped to
  * the actor's own moderators - see user.service.ts#buildUserListScopeFilter).
  * Both hit the SAME `/api/users` endpoint; the result set differs per actor,
  * never this component.
@@ -51,6 +52,8 @@ export function UserListView({
   createLabel,
   emptyTitle,
   emptyDescription,
+  userLayer,
+  newHref,
 }: {
   basePath: string;
   title: string;
@@ -58,6 +61,10 @@ export function UserListView({
   createLabel: string;
   emptyTitle: string;
   emptyDescription: string;
+  /** Narrows the list to one fixed layer (the layer-tabbed management area's active tab). Server-revalidated - see user.service.ts#listUsers. */
+  userLayer?: UserLayer;
+  /** Href for the "Add" button and each row's link targets - defaults to `${basePath}/...` when omitted. */
+  newHref?: string;
 }) {
   const [rows, setRows] = useState<UserRow[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta>();
@@ -67,6 +74,7 @@ export function UserListView({
   const [error, setError] = useState<string>();
   const [errorCode, setErrorCode] = useState<string>();
   const isSuperAdmin = useAuthStore((s) => s.isSuperAdmin);
+  const currentUserLayer = useAuthStore((s) => s.userLayer);
   const currentUserId = useAuthStore((s) => s.user?._id);
 
   const load = useCallback(async () => {
@@ -75,7 +83,7 @@ export function UserListView({
     setErrorCode(undefined);
     try {
       const { data, meta } = await apiClient.getPaginated<UserRow[]>("/api/users", {
-        query: { page, limit: 20, search: search || undefined },
+        query: { page, limit: 20, search: search || undefined, userLayer },
       });
       setRows(data);
       setPagination(meta?.pagination);
@@ -85,12 +93,22 @@ export function UserListView({
     } finally {
       setLoading(false);
     }
-  }, [page, search]);
+  }, [page, search, userLayer]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch on mount, not a render-time state sync
     load();
   }, [load]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resets pagination when the management area's active tab (layer) changes
+    setPage(1);
+  }, [userLayer]);
+
+  // Carried on row links so the destination page (which only knows its own
+  // route, not which management-area tab it was reached from) can build its
+  // own "back to list" target pointing at the right layer tab.
+  const layerQuery = userLayer ? `?layer=${userLayer}` : "";
 
   const columns: DataTableColumn<UserRow>[] = [
     { key: "name", header: "Name", render: (r) => `${r.firstName} ${r.lastName}` },
@@ -107,22 +125,29 @@ export function UserListView({
   ];
 
   return (
-    <ContentContainer>
-      <PageHeader
-        title={title}
-        description={description}
-        actions={
-          <PermissionGuard resource="users" action="add">
-            <Link href={`${basePath}/new`}>
-              <Button>
-                <Plus className="h-4 w-4" /> {createLabel}
-              </Button>
-            </Link>
-          </PermissionGuard>
-        }
-      />
+    <section className="mb-8">
+      <div className="mb-3 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-base font-semibold text-ink">{title}</h2>
+          {description && <p className="text-sm text-ink-soft">{description}</p>}
+        </div>
+        <PermissionGuard resource="users" action="add">
+          <Link href={newHref ?? `${basePath}/new`}>
+            <Button size="sm">
+              <Plus className="h-4 w-4" /> {createLabel}
+            </Button>
+          </Link>
+        </PermissionGuard>
+      </div>
       <div className="mb-4 max-w-xs">
-        <SearchInput placeholder="Search users..." value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+        <SearchInput
+          placeholder="Search users..."
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
+        />
       </div>
       <DataTable
         columns={columns}
@@ -137,30 +162,39 @@ export function UserListView({
         emptyTitle={emptyTitle}
         emptyDescription={emptyDescription}
         rowActions={(r) => (
-          <div className="flex items-center justify-end gap-1">
+          <RowActionsMenu label={`Actions for ${r.firstName} ${r.lastName}`}>
             <PermissionGuard resource="users" action="view">
-              <IconLink href={`${basePath}/${r._id}`} label="View">
-                <Eye className="h-4 w-4" />
-              </IconLink>
+              <RowActionLink href={`${basePath}/${r._id}${layerQuery}`} icon={<Eye className="h-4 w-4" />} label="View" />
             </PermissionGuard>
             <PermissionGuard resource="users" action="edit">
-              <IconLink href={`${basePath}/${r._id}/edit`} label="Edit">
-                <Pencil className="h-4 w-4" />
-              </IconLink>
+              <RowActionLink href={`${basePath}/${r._id}/edit${layerQuery}`} icon={<Pencil className="h-4 w-4" />} label="Edit" />
             </PermissionGuard>
-            {/* Requirement #21 - Super Admin only, plus the same eligibility rules
+            {/* Requirement #21, extended to Company Admin -> its own Moderators -
+                Super Admin or Company Admin only, plus the same eligibility rules
                 the server enforces (role-hierarchy.ts getImpersonationIneligibleReason -
-                never for self, another Super Admin, or a non-active account). This is
-                UX filtering only: POST /api/auth/impersonate independently re-validates
-                every one of these conditions server-side. */}
-            {isSuperAdmin &&
+                never for self, an unauthorized layer/ownership pairing, or a
+                non-active account). This is UX filtering only: POST
+                /api/auth/impersonate independently re-validates every one of
+                these conditions server-side. */}
+            {(isSuperAdmin || currentUserLayer === USER_LAYERS.COMPANY_ADMIN) &&
               currentUserId &&
               !getImpersonationIneligibleReason({
                 actorUserId: currentUserId,
+                actorLayer: currentUserLayer,
+                isSuperAdmin,
                 targetUserId: r._id,
-                targetSlugs: r.roles.map((role) => role.slug as RoleSlug),
+                targetUserLayer: r.userLayer,
                 targetStatus: r.status,
-              }) && <ImpersonateButton userId={r._id} userLabel={`${r.firstName} ${r.lastName}`} />}
+                targetManagedBy: r.managedBy,
+              }) && (
+                <ImpersonateButton
+                  userId={r._id}
+                  userLabel={`${r.firstName} ${r.lastName}`}
+                  renderTrigger={(onClick) => (
+                    <RowActionButton icon={<LogIn className="h-4 w-4" />} label="Login as user" onClick={onClick} />
+                  )}
+                />
+              )}
             {r.status !== "DISABLED" && (
               <PermissionGuard resource="users" action="delete">
                 <DeleteButton
@@ -170,12 +204,20 @@ export function UserListView({
                     await apiClient.delete(`/api/users/${r._id}`);
                     await load();
                   }}
+                  renderTrigger={(onClick) => (
+                    <RowActionButton
+                      icon={<Trash2 className="h-4 w-4" />}
+                      label="Deactivate"
+                      variant="danger"
+                      onClick={onClick}
+                    />
+                  )}
                 />
               </PermissionGuard>
             )}
-          </div>
+          </RowActionsMenu>
         )}
       />
-    </ContentContainer>
+    </section>
   );
 }

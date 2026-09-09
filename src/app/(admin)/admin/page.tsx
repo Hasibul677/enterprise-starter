@@ -14,11 +14,7 @@ export default function AdminHomePage() {
         description="Super Admin console - manage users, roles, and menus."
       />
       <div className="grid gap-4 sm:grid-cols-3">
-        {[
-          { label: "Users", href: "/admin/users" },
-          { label: "Roles", href: "/admin/roles" },
-          { label: "Menus", href: "/admin/menus" },
-        ].map((card) => (
+        {[{ label: "Management", href: "/admin/management" }].map((card) => (
           <a
             key={card.href}
             href={card.href}

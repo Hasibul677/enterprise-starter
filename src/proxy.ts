@@ -1,30 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveCurrentAccess } from "@/lib/auth/current-user";
-import { isAdminAreaRole, isNormalAdminAreaRole, getDefaultLandingRoute } from "@/lib/permissions/role-hierarchy";
+import { isAdminAreaLayer, isCompanyAdminAreaLayer, getDefaultLandingRoute } from "@/lib/permissions/role-hierarchy";
 
 /**
  * Centralized route-isolation gate for the three dashboard trees
  * (requirement #4):
- *   /admin/**         - Super Admin or Admin
- *   /normal-admin/**  - Super Admin, Normal Admin, or Moderator
- *   /dashboard/**     - any authenticated, non-disabled/blocked user
+ *   /admin/**          - Super Admin or Admin
+ *   /company-admin/**  - Super Admin, Company Admin, or Moderator
+ *   /dashboard/**      - any authenticated, non-disabled/blocked user
  *
  * Next.js 16 runs proxy.ts on the Node.js runtime by default (unlike the old
  * Edge-only `middleware.ts`), so - unlike a classic Edge middleware - this
  * can safely connect to MongoDB and reuse the exact same DB-backed
  * resolveCurrentAccess() used everywhere else: real signature verification,
- * a fresh tokenVersion/status read, and roles computed from the DB, never
- * from anything a client could forge (JWT payloads carry no role/permission
- * data - see src/lib/security/jwt.ts).
+ * a fresh tokenVersion/status read, and userLayer computed from the DB,
+ * never from anything a client could forge (JWT payloads carry no role/
+ * permission/layer data - see src/lib/security/jwt.ts).
  *
  * This is still only the first line of defense. Per Next's own guidance,
  * proxy matchers can be misconfigured or bypassed by a refactor, so every
- * page layout (requireAdminAreaPage()/requireNormalAdminAreaPage()) and
+ * page layout (requireAdminAreaPage()/requireCompanyAdminAreaPage()) and
  * every API route (requireAdminAreaAccess()/requirePermission()/etc.)
  * independently re-checks this - nothing here is ever the sole gate.
  */
 const ADMIN_PREFIX = "/admin";
-const NORMAL_ADMIN_PREFIX = "/normal-admin";
+const COMPANY_ADMIN_PREFIX = "/company-admin";
 const DASHBOARD_PREFIX = "/dashboard";
 const AUTH_PAGES = ["/login", "/register"];
 
@@ -32,11 +32,11 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const isAdminRoute = pathname.startsWith(ADMIN_PREFIX);
-  const isNormalAdminRoute = pathname.startsWith(NORMAL_ADMIN_PREFIX);
+  const isCompanyAdminRoute = pathname.startsWith(COMPANY_ADMIN_PREFIX);
   const isDashboardRoute = pathname.startsWith(DASHBOARD_PREFIX);
   const isAuthPage = AUTH_PAGES.some((p) => pathname.startsWith(p));
 
-  if (!isAdminRoute && !isNormalAdminRoute && !isDashboardRoute && !isAuthPage) {
+  if (!isAdminRoute && !isCompanyAdminRoute && !isDashboardRoute && !isAuthPage) {
     return NextResponse.next();
   }
 
@@ -60,11 +60,11 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (isAdminRoute && !access.isSuperAdmin && !isAdminAreaRole(access.roleSlugs)) {
+  if (isAdminRoute && !access.isSuperAdmin && !isAdminAreaLayer(access.userLayer)) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
-  if (isNormalAdminRoute && !access.isSuperAdmin && !isNormalAdminAreaRole(access.roleSlugs)) {
+  if (isCompanyAdminRoute && !access.isSuperAdmin && !isCompanyAdminAreaLayer(access.userLayer)) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
@@ -72,5 +72,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*", "/normal-admin/:path*", "/dashboard/:path*", "/login", "/register"],
+  matcher: ["/admin/:path*", "/company-admin/:path*", "/dashboard/:path*", "/login", "/register"],
 };

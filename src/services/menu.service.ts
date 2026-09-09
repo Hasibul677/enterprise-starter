@@ -1,4 +1,5 @@
 import { menuRepository } from "@/repositories/menu.repository";
+import { userRepository } from "@/repositories/user.repository";
 import { auditLogRepository } from "@/repositories/audit-log.repository";
 import { validateMenuHierarchy } from "@/lib/menu/menu-service";
 import { NotFoundError, ConflictError } from "@/lib/errors/app-error";
@@ -44,6 +45,16 @@ export async function updateMenu(menuId: string, input: MenuUpdateInput, actorUs
     updatedBy: actorUserId,
   } as unknown as Partial<MenuDocument>);
 
+  // A menu's visibility depends on isActive/scope/resourceKey for every
+  // user in the app (see buildEffectiveMenuTree()), not just one role - bump
+  // everyone's permissionVersion so an already-open tab detects the change
+  // (see use-permission-sync.ts). Broad on purpose: menu edits are rare
+  // admin actions, and an unaffected user's next refresh is just a harmless
+  // no-op since it's still scoped correctly per-user server-side.
+  if (input.isActive !== undefined || input.scope !== undefined || input.resourceKey !== undefined) {
+    await userRepository.incrementPermissionVersionForAll();
+  }
+
   await auditLogRepository.record({
     actorUserId,
     action: "MENU_UPDATED",
@@ -59,6 +70,7 @@ export async function deactivateMenu(menuId: string, actorUserId: string) {
   if (!existing) throw new NotFoundError("Menu not found.");
 
   const updated = await menuRepository.deactivateById(menuId);
+  await userRepository.incrementPermissionVersionForAll();
 
   await auditLogRepository.record({
     actorUserId,

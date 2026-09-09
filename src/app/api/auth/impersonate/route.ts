@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { resolveCurrentAccess } from "@/lib/auth/current-user";
-import { requireSuperAdmin } from "@/lib/permissions/guard";
+import { requireImpersonationActor } from "@/lib/permissions/guard";
 import { impersonateUser } from "@/lib/auth/auth-service";
 import { impersonateSchema } from "@/features/auth/schemas/impersonate.schema";
 import { setAuthCookies } from "@/lib/security/cookies";
@@ -12,13 +12,17 @@ import { ok, fail, handleRouteError } from "@/lib/api/response";
 import { getRateLimiter, rateLimitKeyFromRequest } from "@/lib/security/rate-limit";
 
 /**
- * Requirement #21 - "Login as User". SUPER_ADMIN only (requireSuperAdmin()
- * is the real, DB-derived gate - never trust a client-side role check).
- * Overwrites the CURRENT browser's auth cookies with a real session/token
- * pair for the target user, exactly like a normal login (setAuthCookies()
- * is the same helper the login route uses) - the resulting session is
- * server-authorized and enforced by the existing auth/permission/menu/
- * route-protection pipeline unchanged, never a client-side shortcut.
+ * Requirement #21 - "Login as User", extended to Company Admin account-
+ * access over its own Moderators. requireImpersonationActor() is the real,
+ * DB-derived gate on WHO may start an impersonation at all (Super Admin or
+ * Company Admin - never trust a client-side role check); per-target
+ * eligibility (layer, ownership, active status) is independently enforced
+ * inside impersonateUser(). Overwrites the CURRENT browser's auth cookies
+ * with a real session/token pair for the target user, exactly like a normal
+ * login (setAuthCookies() is the same helper the login route uses) - the
+ * resulting session is server-authorized and enforced by the existing auth/
+ * permission/menu/route-protection pipeline unchanged, never a client-side
+ * shortcut.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -29,7 +33,7 @@ export async function POST(request: NextRequest) {
 
     await connectToDatabase();
     const access = await resolveCurrentAccess();
-    requireSuperAdmin(access);
+    requireImpersonationActor(access);
 
     const body = await request.json();
     const input = impersonateSchema.parse(body);

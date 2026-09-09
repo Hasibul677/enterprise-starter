@@ -1,67 +1,90 @@
 import { userRepository } from "@/repositories/user.repository";
 import { roleRepository } from "@/repositories/role.repository";
 import { auditLogRepository } from "@/repositories/audit-log.repository";
-import { UserModel } from "@/models/user.model";
 import { hashPassword, isPasswordStrongEnough } from "@/lib/security/password";
 import { ValidationError, NotFoundError, ConflictError, AuthorizationError } from "@/lib/errors/app-error";
-import { ROLE_SLUGS } from "@/lib/permissions/constants";
-import {
-  canAssignRole,
-  canGrantPermissionOverride,
-  canManageTargetUser,
-  getRoleSlugs,
-  MANAGEABLE_TARGET_ROLES_BY,
-} from "@/lib/permissions/role-hierarchy";
+import { USER_LAYERS } from "@/lib/permissions/constants";
+import { canCreateUserInLayer, canGrantPermissionOverride, canManageTargetUser, MANAGEABLE_TARGET_LAYERS_BY } from "@/lib/permissions/role-hierarchy";
 import type { ResolvedAccess } from "@/lib/auth/current-user";
 import type { UserCreateInput } from "@/features/users/schemas/user-create.schema";
 import type { UserUpdateInput } from "@/features/users/schemas/user-update.schema";
-import type { PermissionAction, PermissionMap } from "@/lib/permissions/constants";
+import type { PermissionAction, PermissionMap, UserLayer } from "@/lib/permissions/constants";
 import type { UserDocument } from "@/models/user.model";
+import type { RoleDocument } from "@/models/role.model";
 
 /**
  * Every route in this file already passed requireAdminAreaAccess() or
- * requireNormalAdminAreaAccess() (the actor belongs in SOME admin-capable
+ * requireCompanyAdminAreaAccess() (the actor belongs in SOME admin-capable
  * dashboard) plus requirePermission(USERS, ...) (the actor can act on users
  * AT ALL). Everything below is the finer-grained hierarchy authority those
  * two checks can't express on their own: who specifically the actor is
  * allowed to create/view/edit, per role-hierarchy.ts (requirement #3/#8/#10).
  */
 
-function targetSlugsOf(user: { roles?: unknown }): ReturnType<typeof getRoleSlugs> {
-  return getRoleSlugs((user.roles ?? []) as unknown as { slug: string; isActive: boolean }[]);
-}
-
 /**
  * An inactive role contributes nothing (mergeRolePermissions() skips it),
  * so assigning one to a user would silently create a role reference that
  * does nothing - reject it outright rather than let it happen quietly.
- * Combined with role.service.ts's "can't deactivate a role that's still
- * assigned" guard, a role can never legitimately be both inactive AND held
- * by a user going forward.
+ * Combined with role.service.ts's "can't deactivate a SYSTEM role that's
+ * still assigned" guard, a SYSTEM role can never legitimately be both
+ * inactive AND held by a user going forward (custom roles may now be
+ * deactivated while assigned - see role.service.ts#updateRole).
  */
-function assertRolesActive(roles: { slug: string; isActive: boolean }[]) {
+function assertRolesActive(roles: { name: string; isActive: boolean }[]) {
   const inactive = roles.filter((r) => !r.isActive);
   if (inactive.length > 0) {
     throw new ValidationError("One or more roles are inactive and cannot be assigned.", [
-      { field: "roleIds", message: `Inactive role(s): ${inactive.map((r) => r.slug).join(", ")}.` },
+      { field: "roleIds", message: `Inactive role(s): ${inactive.map((r) => r.name).join(", ")}.` },
     ]);
   }
 }
 
-async function buildUserListScopeFilter(access: ResolvedAccess): Promise<Record<string, unknown>> {
+/**
+ * Requirement #9: every role assigned to one user must target the SAME
+ * fixed layer - a user's userLayer is derived from its roles at creation
+ * time and never mixed. Roles carry permissions, not hierarchy, but a role
+ * still only ever applies within the one layer it was built for.
+ */
+function resolveRolesLayer(roles: { userLayer: UserLayer }[]): UserLayer {
+  const layers = new Set(roles.map((r) => r.userLayer));
+  if (layers.size !== 1) {
+    throw new ValidationError("All selected roles must target the same user layer.", [
+      { field: "roleIds", message: "Roles from different layers cannot be assigned to the same user." },
+    ]);
+  }
+  return layers.values().next().value as UserLayer;
+}
+
+/**
+ * A dynamic role with an owner (Role.managedBy - requirement #6) may only
+ * ever be assigned by the COMPANY_ADMIN who created it; a role with no
+ * owner (managedBy: null - a system default or a SUPER_ADMIN-created role)
+ * is assignable by any actor otherwise authorized to reach this layer.
+ */
+function assertRolesAssignableByActor(roles: RoleDocument[], access: ResolvedAccess) {
+  if (access.isSuperAdmin) return;
+  const actorUserId = String(access.user._id);
+  for (const role of roles) {
+    const roleManagedBy = role.managedBy ? String(role.managedBy) : null;
+    if (roleManagedBy !== null && roleManagedBy !== actorUserId) {
+      throw new AuthorizationError(`You are not authorized to assign the '${role.name}' role.`);
+    }
+  }
+}
+
+function buildUserListScopeFilter(access: ResolvedAccess): Record<string, unknown> {
   if (access.isSuperAdmin) return {};
 
-  const manageableSlugs = Array.from(new Set(access.roleSlugs.flatMap((slug) => MANAGEABLE_TARGET_ROLES_BY[slug] ?? [])));
-  if (manageableSlugs.length === 0) {
-    return { _id: { $in: [] } }; // no manageable roles - matches nothing
+  const manageableLayers = MANAGEABLE_TARGET_LAYERS_BY[access.userLayer] ?? [];
+  if (manageableLayers.length === 0) {
+    return { _id: { $in: [] } }; // no manageable layers - matches nothing
   }
 
-  const roles = await roleRepository.findBySlugs(manageableSlugs);
-  const filter: Record<string, unknown> = { roles: { $in: roles.map((r) => r._id) } };
+  const filter: Record<string, unknown> = { userLayer: { $in: manageableLayers } };
 
-  // NORMAL_ADMIN only ever manages its OWN moderators (requirement #10) -
+  // COMPANY_ADMIN only ever manages its OWN moderators (requirement #10) -
   // ADMIN has no equivalent ownership restriction over CUSTOMER accounts.
-  if (access.roleSlugs.includes(ROLE_SLUGS.NORMAL_ADMIN)) {
+  if (access.userLayer === USER_LAYERS.COMPANY_ADMIN) {
     filter.managedBy = String(access.user._id);
   }
 
@@ -69,9 +92,9 @@ async function buildUserListScopeFilter(access: ResolvedAccess): Promise<Record<
 }
 
 /**
- * Fetches a single user for an admin-area/normal-admin-area viewer,
+ * Fetches a single user for an admin-area/company-admin-area viewer,
  * enforcing the same target-management authority as updateUser() so a
- * NORMAL_ADMIN (etc.) can't read another actor's users by guessing an id
+ * COMPANY_ADMIN (etc.) can't read another actor's users by guessing an id
  * even though the list endpoint already scopes correctly (requirement #10).
  */
 export async function getUserForActor(userId: string, access: ResolvedAccess) {
@@ -83,10 +106,10 @@ export async function getUserForActor(userId: string, access: ResolvedAccess) {
       String(access.user._id) === userId ||
       canManageTargetUser({
         actorUserId: String(access.user._id),
-        actorSlugs: access.roleSlugs,
+        actorLayer: access.userLayer,
         isSuperAdmin: access.isSuperAdmin,
         targetUserId: userId,
-        targetSlugs: targetSlugsOf(target),
+        targetLayer: target.userLayer as UserLayer,
         targetManagedBy: target.managedBy ? String(target.managedBy) : null,
       });
     if (!authorized) {
@@ -115,16 +138,17 @@ export async function adminCreateUser(input: UserCreateInput, access: ResolvedAc
   assertRolesActive(roles);
 
   const actorUserId = String(access.user._id);
-  const requestedSlugs = roles.map((r) => r.slug);
-  for (const slug of requestedSlugs) {
-    if (!canAssignRole(access.roleSlugs, slug)) {
-      throw new AuthorizationError(`You are not authorized to create a user with the '${slug}' role.`);
-    }
-  }
+  const actorLayer: UserLayer = access.isSuperAdmin ? USER_LAYERS.SUPER_ADMIN : access.userLayer;
+  const targetLayer = resolveRolesLayer(roles as unknown as { userLayer: UserLayer }[]);
 
-  // Ownership: a MODERATOR created here is always created by its NORMAL_ADMIN
-  // (the only actor canAssignRole() ever lets request the MODERATOR role).
-  const managedBy = requestedSlugs.includes(ROLE_SLUGS.MODERATOR) ? actorUserId : null;
+  if (!canCreateUserInLayer(actorLayer, targetLayer)) {
+    throw new AuthorizationError(`You are not authorized to create a user in the '${targetLayer}' layer.`);
+  }
+  assertRolesAssignableByActor(roles, access);
+
+  // Ownership: a MODERATOR created here is always created by its COMPANY_ADMIN
+  // (the only actor canCreateUserInLayer() ever lets request the MODERATOR layer).
+  const managedBy = targetLayer === USER_LAYERS.MODERATOR ? actorUserId : null;
 
   const passwordHash = await hashPassword(input.password);
   const user = await userRepository.create({
@@ -133,6 +157,7 @@ export async function adminCreateUser(input: UserCreateInput, access: ResolvedAc
     email: input.email,
     passwordHash,
     roles: input.roleIds as unknown as UserDocument["roles"],
+    userLayer: targetLayer,
     status: input.status,
     managedBy: managedBy as unknown as UserDocument["managedBy"],
     createdBy: actorUserId as unknown as UserDocument["createdBy"],
@@ -144,6 +169,7 @@ export async function adminCreateUser(input: UserCreateInput, access: ResolvedAc
     action: "USER_CREATED",
     entityType: "User",
     entityId: String(user._id),
+    metadata: { userLayer: targetLayer },
   });
 
   return user;
@@ -154,7 +180,7 @@ export async function updateUser(userId: string, input: UserUpdateInput, access:
   if (!target) throw new NotFoundError("User not found.");
 
   const actorUserId = String(access.user._id);
-  const targetSlugs = targetSlugsOf(target);
+  const targetLayer = target.userLayer as UserLayer;
   const targetManagedBy = target.managedBy ? String(target.managedBy) : null;
 
   // Requirement #9/#15 - absolutely no one, Super Admin included, may
@@ -173,10 +199,10 @@ export async function updateUser(userId: string, input: UserUpdateInput, access:
     if (
       !canManageTargetUser({
         actorUserId,
-        actorSlugs: access.roleSlugs,
+        actorLayer: access.userLayer,
         isSuperAdmin: access.isSuperAdmin,
         targetUserId: userId,
-        targetSlugs,
+        targetLayer,
         targetManagedBy,
       })
     ) {
@@ -193,40 +219,15 @@ export async function updateUser(userId: string, input: UserUpdateInput, access:
     }
     assertRolesActive(roles);
 
-    // Only NEWLY added roles need assignment authority (requirement #8/#9) -
-    // keeping or removing a role the target already holds isn't a "grant".
-    // This matters in practice: a Super Admin can always REACH any user
-    // (requirement #2), including an existing MODERATOR, but
-    // canAssignRole() (see its own doc comment) deliberately excludes
-    // MODERATOR from even Super Admin's assignable set - re-validating
-    // every unchanged role on every edit would wrongly block a Super Admin
-    // from e.g. just changing that Moderator's status.
-    const addedRoleIds = new Set(input.roleIds.filter((id) => !previousRoleIds.includes(id)));
-    for (const role of roles) {
-      if (addedRoleIds.has(String(role._id)) && !canAssignRole(access.roleSlugs, role.slug)) {
-        throw new AuthorizationError(`You are not authorized to assign the '${role.slug}' role.`);
-      }
+    // A user's layer is fixed at creation and never changes here - every
+    // newly-selected role must still target that same layer (requirement #9).
+    const newLayer = resolveRolesLayer(roles as unknown as { userLayer: UserLayer }[]);
+    if (newLayer !== targetLayer) {
+      throw new ValidationError(`Roles must target this user's '${targetLayer}' layer.`, [
+        { field: "roleIds", message: `This user belongs to the '${targetLayer}' layer and cannot be reassigned to a different one.` },
+      ]);
     }
-
-    // Requirement #10/#33 - never let the last active Super Admin's access
-    // path disappear, even via a per-user role edit rather than deactivating
-    // the role itself (see role.service.ts#deactivateRole for the
-    // equivalent guard on the role side).
-    const targetHadSuperAdmin = targetSlugs.includes(ROLE_SLUGS.SUPER_ADMIN);
-    const newSlugs = roles.map((r) => r.slug);
-    if (targetHadSuperAdmin && !newSlugs.includes(ROLE_SLUGS.SUPER_ADMIN)) {
-      const superAdminRoleId = ((target.roles ?? []) as unknown as { slug: string; _id: unknown }[]).find(
-        (r) => r.slug === ROLE_SLUGS.SUPER_ADMIN
-      )?._id;
-      const otherActiveSuperAdmins = await UserModel.countDocuments({
-        roles: superAdminRoleId,
-        status: "ACTIVE",
-        _id: { $ne: userId },
-      });
-      if (otherActiveSuperAdmins < 1) {
-        throw new ValidationError("Cannot remove the Super Admin role from the last active Super Admin.");
-      }
-    }
+    assertRolesAssignableByActor(roles, access);
   }
 
   const previousStatus = target.status;
@@ -245,6 +246,9 @@ export async function updateUser(userId: string, input: UserUpdateInput, access:
   const statusBecameRestrictive = input.status && input.status !== previousStatus && (input.status === "BLOCKED" || input.status === "DISABLED");
   if (statusBecameRestrictive || input.roleIds) {
     await userRepository.incrementTokenVersion(userId);
+  }
+  if (input.status || input.roleIds) {
+    await userRepository.incrementPermissionVersion(userId);
   }
 
   await auditLogRepository.record({
@@ -291,7 +295,7 @@ export async function updateUser(userId: string, input: UserUpdateInput, access:
 
 /**
  * Sets a target user's per-user permission overrides (requirement #9) -
- * SUPER_ADMIN -> ADMIN, or NORMAL_ADMIN -> its own MODERATOR. Every granted
+ * SUPER_ADMIN -> ADMIN, or COMPANY_ADMIN -> its own MODERATOR. Every granted
  * (true) entry is individually validated by canGrantPermissionOverride();
  * this is where privilege escalation is actually prevented, not just at the
  * route boundary.
@@ -301,16 +305,16 @@ export async function setUserPermissionOverrides(targetUserId: string, overrides
   if (!target) throw new NotFoundError("User not found.");
 
   const actorUserId = String(access.user._id);
-  const targetSlugs = targetSlugsOf(target);
+  const targetLayer = target.userLayer as UserLayer;
   const targetManagedBy = target.managedBy ? String(target.managedBy) : null;
 
   if (
     !canManageTargetUser({
       actorUserId,
-      actorSlugs: access.roleSlugs,
+      actorLayer: access.userLayer,
       isSuperAdmin: access.isSuperAdmin,
       targetUserId,
-      targetSlugs,
+      targetLayer,
       targetManagedBy,
     })
   ) {
@@ -322,11 +326,11 @@ export async function setUserPermissionOverrides(targetUserId: string, overrides
       if (!granted) continue;
       const allowed = canGrantPermissionOverride({
         actorUserId,
-        actorSlugs: access.roleSlugs,
+        actorLayer: access.userLayer,
         actorEffectivePermissions: access.permissions,
         isSuperAdmin: access.isSuperAdmin,
         targetUserId,
-        targetSlugs,
+        targetLayer,
         targetManagedBy,
         resource,
         action: action as PermissionAction,
@@ -340,6 +344,7 @@ export async function setUserPermissionOverrides(targetUserId: string, overrides
   const updated = await userRepository.updatePermissionOverrides(targetUserId, overrides as Record<string, Record<string, boolean>>);
   // Takes effect immediately, same as a role change (see updateUser above).
   await userRepository.incrementTokenVersion(targetUserId);
+  await userRepository.incrementPermissionVersion(targetUserId);
 
   await auditLogRepository.record({
     actorUserId,
@@ -353,8 +358,27 @@ export async function setUserPermissionOverrides(targetUserId: string, overrides
   return updated;
 }
 
-export async function listUsers(params: { page: number; limit: number; search?: string }, access: ResolvedAccess) {
-  const scopeFilter = await buildUserListScopeFilter(access);
+/**
+ * Whether `layer` is one the actor is allowed to view at all - reused so the
+ * layer-tabbed management area's `?userLayer=` filter can never widen what
+ * buildUserListScopeFilter() already scoped the actor to.
+ */
+function isLayerVisibleToActor(layer: UserLayer, access: ResolvedAccess): boolean {
+  if (access.isSuperAdmin) return true;
+  return (MANAGEABLE_TARGET_LAYERS_BY[access.userLayer] ?? []).includes(layer);
+}
+
+export async function listUsers(
+  params: { page: number; limit: number; search?: string; userLayer?: UserLayer },
+  access: ResolvedAccess
+) {
+  const scopeFilter = buildUserListScopeFilter(access);
+  if (params.userLayer) {
+    // An out-of-scope layer request matches nothing rather than erroring -
+    // same "fail closed" shape buildUserListScopeFilter() already uses for
+    // an actor with zero manageable layers.
+    scopeFilter.userLayer = isLayerVisibleToActor(params.userLayer, access) ? params.userLayer : { $in: [] };
+  }
   const { items, total } = await userRepository.list({ ...params, scopeFilter });
   return {
     items,

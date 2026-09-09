@@ -1,6 +1,6 @@
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { resolveCurrentAccess } from "@/lib/auth/current-user";
-import { requirePermission, requireNormalAdminAreaAccess } from "@/lib/permissions/guard";
+import { requirePermission, requireCompanyAdminAreaAccess } from "@/lib/permissions/guard";
 import { CORE_RESOURCES } from "@/lib/permissions/constants";
 import { ok, handleRouteError } from "@/lib/api/response";
 
@@ -9,7 +9,7 @@ export async function GET() {
   try {
     await connectToDatabase();
     const access = await resolveCurrentAccess();
-    requireNormalAdminAreaAccess(access);
+    requireCompanyAdminAreaAccess(access);
     requirePermission(access, CORE_RESOURCES.REPORTS, "view");
 
     return ok({ items: [] });

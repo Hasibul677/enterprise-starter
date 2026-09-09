@@ -40,8 +40,18 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-/** Shared user-detail view for `/admin/users/[id]` and `/normal-admin/users/[id]` - see user-list-view.tsx. */
-export function UserDetailView({ basePath, backLabel }: { basePath: string; backLabel: string }) {
+/** Shared user-detail view for `/admin/users/[id]` and `/company-admin/users/[id]` - see user-list-view.tsx. */
+export function UserDetailView({
+  basePath,
+  backLabel,
+  listHref,
+}: {
+  basePath: string;
+  backLabel: string;
+  /** Where the back button returns to - defaults to `basePath` when omitted. */
+  listHref?: string;
+}) {
+  const returnTo = listHref ?? basePath;
   const { id } = useParams<{ id: string }>();
   const [user, setUser] = useState<UserDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -63,7 +73,7 @@ export function UserDetailView({ basePath, backLabel }: { basePath: string; back
       <PageHeader
         title={`${user.firstName} ${user.lastName}`}
         description={user.email}
-        backHref={basePath}
+        backHref={returnTo}
         backLabel={backLabel}
         actions={
           <div className="flex gap-2">

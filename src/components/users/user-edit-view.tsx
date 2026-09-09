@@ -19,6 +19,7 @@ import { Loading } from "@/components/feedback/loading";
 import { applyServerErrors } from "@/components/forms/set-server-errors";
 import { apiClient, ApiClientError } from "@/lib/api-client/api-client";
 import { PermissionGuard } from "@/components/permission/permission-guard";
+import type { UserLayer } from "@/lib/permissions/constants";
 
 type RoleOption = { _id: string; name: string };
 type UserDetail = {
@@ -26,42 +27,53 @@ type UserDetail = {
   firstName: string;
   lastName: string;
   status: string;
+  userLayer: UserLayer;
   roles: { _id: string; name: string }[];
 };
 
 /**
  * Shared "edit user" form. `allowRoleEdit` is off for
- * `/normal-admin/users/[id]/edit`: a NORMAL_ADMIN's only assignable role is
- * MODERATOR (see role-hierarchy.ts CREATABLE_ROLES_BY), so there is nothing
- * to pick - the server independently rejects a role change it doesn't
- * authorize either way (requirement #47).
+ * `/company-admin/users/[id]/edit`: a COMPANY_ADMIN's only assignable roles
+ * target the MODERATOR layer it already belongs to, and it can only ever
+ * change WHICH such role, not the user's layer itself - out of scope to
+ * simplify this form for now; the server independently rejects any change
+ * it doesn't authorize either way (requirement #47).
  *
- * Role options come from GET /api/roles/assignable, not GET /api/roles (the
- * latter needs a `roles.view` grant an Admin may not have, and is
- * admin-area-only so a Normal Admin can never reach it) - see that route's
- * own doc comment. The target's CURRENT role(s) are merged in even if not
- * "assignable" (e.g. a Super Admin can always reach an existing Moderator -
- * requirement #2 - even though Super Admin can't freshly assign MODERATOR
- * through this form - see role-hierarchy.ts canAssignRole()), purely so the
- * picker shows a real label instead of a blank entry; submitting with that
- * role UNCHANGED is still accepted server-side (only newly added roles need
- * assignment authority - see user.service.ts#updateUser).
+ * Role options come from GET /api/roles/assignable?layer=<the user's own,
+ * fixed layer>, not GET /api/roles (the latter needs a `roles.view` grant an
+ * Admin may not have, and is admin-area-only so a Company Admin can never
+ * reach it) - see that route's own doc comment. The target's CURRENT
+ * role(s) are merged in even if not "assignable" (e.g. a custom role owned
+ * by a different Company Admin), purely so the picker shows a real label
+ * instead of a blank entry; submitting with that role UNCHANGED is still
+ * accepted server-side (see user.service.ts#updateUser).
  */
-export function UserEditView({ basePath, allowRoleEdit }: { basePath: string; allowRoleEdit: boolean }) {
+export function UserEditView({
+  basePath,
+  allowRoleEdit,
+  listHref,
+}: {
+  basePath: string;
+  allowRoleEdit: boolean;
+  /** Where "Cancel"/success redirects to - defaults to `basePath` when omitted. */
+  listHref?: string;
+}) {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const returnTo = listHref ?? basePath;
 
   const form = useForm<UserUpdateInput>({ resolver: zodResolver(userUpdateSchema) });
 
   useEffect(() => {
-    Promise.all([
-      allowRoleEdit ? apiClient.get<RoleOption[]>("/api/roles/assignable") : Promise.resolve([]),
-      apiClient.get<{ user: UserDetail }>(`/api/users/${id}`),
-    ])
-      .then(([roleList, { user }]) => {
+    apiClient
+      .get<{ user: UserDetail }>(`/api/users/${id}`)
+      .then(async ({ user }) => {
+        const roleList = allowRoleEdit
+          ? await apiClient.get<RoleOption[]>("/api/roles/assignable", { query: { layer: user.userLayer } }).catch(() => [])
+          : [];
         const merged = new Map(roleList.map((r) => [r._id, r] as const));
         for (const r of user.roles) {
           if (!merged.has(r._id)) merged.set(r._id, { _id: r._id, name: r.name });
@@ -83,7 +95,7 @@ export function UserEditView({ basePath, allowRoleEdit }: { basePath: string; al
     try {
       const payload = allowRoleEdit ? values : { firstName: values.firstName, lastName: values.lastName, status: values.status };
       await apiClient.patch(`/api/users/${id}`, payload);
-      router.push(basePath);
+      router.push(returnTo);
     } catch (err) {
       if (err instanceof ApiClientError) {
         applyServerErrors(form.setError, err.errors);
@@ -101,7 +113,7 @@ export function UserEditView({ basePath, allowRoleEdit }: { basePath: string; al
       <PageHeader
         title="Edit user"
         description="Update profile, roles, and account status."
-        backHref={basePath}
+        backHref={returnTo}
       />
       {globalError && <div className="mb-4"><Alert variant="danger">{globalError}</Alert></div>}
       <Form form={form} onSubmit={onSubmit} className="max-w-lg">
@@ -135,7 +147,7 @@ export function UserEditView({ basePath, allowRoleEdit }: { basePath: string; al
         </PermissionGuard>
         <div className="flex gap-2">
           <SubmitButton loading={form.formState.isSubmitting}>Save changes</SubmitButton>
-          <Button type="button" variant="secondary" onClick={() => router.push(basePath)}>Cancel</Button>
+          <Button type="button" variant="secondary" onClick={() => router.push(returnTo)}>Cancel</Button>
         </div>
       </Form>
     </ContentContainer>

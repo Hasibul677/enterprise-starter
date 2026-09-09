@@ -19,7 +19,7 @@ import { applyServerErrors } from "@/components/forms/set-server-errors";
 import { apiClient, ApiClientError } from "@/lib/api-client/api-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { getDefaultLandingRoute } from "@/lib/permissions/role-hierarchy";
-import type { RoleSlug } from "@/lib/permissions/constants";
+import type { UserLayer } from "@/lib/permissions/constants";
 
 const fieldClassName = "h-10 rounded-xl bg-paper/50 transition-all duration-200 focus:bg-surface focus:ring-4";
 
@@ -42,7 +42,8 @@ function LoginForm() {
         user: { _id: string; firstName: string; lastName: string; email: string; status: string };
         permissions: ReturnType<typeof Object>;
         isSuperAdmin: boolean;
-        roleSlugs: RoleSlug[];
+        userLayer: UserLayer;
+        roleSlugs: string[];
         menus: never[];
         warning: boolean;
       }>("/api/auth/me");

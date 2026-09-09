@@ -1,5 +1,6 @@
 import { Schema, model, models, type InferSchemaType, type Model } from "mongoose";
 import { resourcePermissionSchema, validatePermissionMap } from "@/models/shared/resource-permission.schema";
+import { USER_LAYER_VALUES } from "@/lib/permissions/constants";
 
 export const USER_STATUSES = ["ACTIVE", "WARNING", "BLOCKED", "DISABLED"] as const;
 export type UserStatus = (typeof USER_STATUSES)[number];
@@ -17,6 +18,12 @@ const userSchema = new Schema(
     },
     passwordHash: { type: String, required: true, select: false },
     roles: [{ type: Schema.Types.ObjectId, ref: "Role", index: true }],
+    // The single source of hierarchy authority (see role-hierarchy.ts) -
+    // exactly one of the 5 fixed layers, never derived from `roles`. A user
+    // may hold multiple dynamic roles, but they all target this same layer
+    // (enforced in user.service.ts) - roles carry permissions, this carries
+    // rank.
+    userLayer: { type: String, enum: USER_LAYER_VALUES, required: true, index: true },
     status: { type: String, enum: USER_STATUSES, default: "ACTIVE", index: true },
     emailVerified: { type: Boolean, default: false },
     avatarUrl: { type: String, default: null },
@@ -25,9 +32,15 @@ const userSchema = new Schema(
     // Bumped on password change / forced logout / admin security action.
     // Any previously-issued JWT whose tokenVersion no longer matches is rejected.
     tokenVersion: { type: Number, default: 0 },
-    // Ownership for the NORMAL_ADMIN -> MODERATOR relationship (set when a
-    // NORMAL_ADMIN creates a MODERATOR). Distinct from createdBy - a Super
-    // Admin could create a moderator on a normal admin's behalf without
+    // Bumped whenever authorization state affecting this user changes (own
+    // status/roles/overrides, or a role/menu it depends on). Unlike
+    // tokenVersion this never invalidates the session - it's polled by
+    // use-permission-sync.ts so an already-open tab can detect its cached
+    // permissions/menus are stale and refetch them without a manual reload.
+    permissionVersion: { type: Number, default: 0 },
+    // Ownership for the COMPANY_ADMIN -> MODERATOR relationship (set when a
+    // COMPANY_ADMIN creates a MODERATOR). Distinct from createdBy - a Super
+    // Admin could create a moderator on a company admin's behalf without
     // becoming its manager. See role-hierarchy.ts canManageTargetUser().
     managedBy: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
     // Per-user permission grants, unioned on top of this user's role-derived

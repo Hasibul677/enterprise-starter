@@ -20,7 +20,7 @@ export async function POST() {
     await connectToDatabase();
     const access = await resolveCurrentAccess();
 
-    const { accessToken, refreshToken } = await endImpersonation({ access });
+    const { accessToken, refreshToken, redirectTo } = await endImpersonation({ access });
 
     const env = getEnv();
     const csrfToken = generateCsrfToken();
@@ -32,7 +32,7 @@ export async function POST() {
       refreshMaxAgeSeconds: durationToSeconds(env.REFRESH_TOKEN_EXPIRES_IN),
     });
 
-    return ok({ redirectTo: "/admin" }, { code: "IMPERSONATION_ENDED", message: "Returned to Super Admin." });
+    return ok({ redirectTo }, { code: "IMPERSONATION_ENDED", message: "Returned to your account." });
   } catch (err) {
     return handleRouteError(err);
   }

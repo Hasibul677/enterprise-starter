@@ -5,16 +5,19 @@ import { verifyAccessToken, TokenExpiredAppError, TokenInvalidError } from "@/li
 import { userRepository } from "@/repositories/user.repository";
 import { AuthenticationError, AccountStatusError } from "@/lib/errors/app-error";
 import { mergeRolePermissions } from "@/lib/permissions/merge";
-import { SUPER_ADMIN_ROLE_SLUG } from "@/lib/permissions/constants";
+import { USER_LAYERS } from "@/lib/permissions/constants";
 import { getRoleSlugs } from "@/lib/permissions/role-hierarchy";
-import type { PermissionMap, RoleSlug } from "@/lib/permissions/constants";
+import type { PermissionMap, UserLayer } from "@/lib/permissions/constants";
 import type { RoleDocument } from "@/models/role.model";
 import type { UserDocument } from "@/models/user.model";
 
 export type ResolvedAccess = {
   user: UserDocument;
   roles: RoleDocument[];
-  roleSlugs: RoleSlug[];
+  /** Display-only role slugs (e.g. UI badges) - NEVER used for authority. See role-hierarchy.ts. */
+  roleSlugs: string[];
+  /** The single source of hierarchy authority - see role-hierarchy.ts. */
+  userLayer: UserLayer;
   permissions: PermissionMap;
   isSuperAdmin: boolean;
   sessionId: string;
@@ -88,7 +91,8 @@ export async function resolveCurrentAccess(request?: NextRequest): Promise<Resol
   }
 
   const roles = (user.roles ?? []) as unknown as RoleDocument[];
-  const isSuperAdmin = roles.some((r) => r.isActive && r.slug === SUPER_ADMIN_ROLE_SLUG);
+  const userLayer = user.userLayer as UserLayer;
+  const isSuperAdmin = userLayer === USER_LAYERS.SUPER_ADMIN;
   const permissions = mergeRolePermissions([
     ...roles.map((r) => ({ isActive: r.isActive, permissions: Object.fromEntries(r.permissions as unknown as Map<string, never>) })),
     // Per-user overrides (requirement #9) union in the same way multiple
@@ -102,6 +106,7 @@ export async function resolveCurrentAccess(request?: NextRequest): Promise<Resol
     user,
     roles,
     roleSlugs,
+    userLayer,
     permissions,
     isSuperAdmin,
     sessionId: payload.sessionId,

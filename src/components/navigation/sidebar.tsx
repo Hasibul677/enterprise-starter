@@ -26,7 +26,7 @@ export function Sidebar() {
   const pathname = usePathname();
   // The API returns one permission-and-scope-filtered tree for the whole
   // account; which slice of it renders here depends on which dashboard tree
-  // is on screen, so /admin, /normal-admin, and /dashboard sidebars never mix.
+  // is on screen, so /admin, /company-admin, and /dashboard sidebars never mix.
   const sectionedMenus = useMemo(
     () => filterMenusForSection(menus, sectionForPathname(pathname)),
     [menus, pathname]

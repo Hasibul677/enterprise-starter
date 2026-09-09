@@ -29,16 +29,35 @@ export const CORE_RESOURCES = {
 export type ResourceKey = string;
 
 /**
- * The 5 fixed roles the RBAC hierarchy is built around (see
- * src/lib/permissions/role-hierarchy.ts for assignment/management
- * authority). The Role collection stays generic/DB-driven - nothing stops a
- * future custom role slug from being added via the Roles admin UI - but the
- * hierarchy engine only ever grants special authority to these 5 slugs.
+ * The exactly-5, structurally fixed user hierarchy layers (never grows or
+ * shrinks - see src/lib/permissions/role-hierarchy.ts). This is the ONLY
+ * field hierarchy/authority decisions ever read. It is deliberately separate
+ * from Role/ROLE_SLUGS below: a Role is just a dynamic, unlimited permission
+ * bundle that TARGETS one of these layers (Role.userLayer) - creating a role
+ * never creates a new layer, and a role's name/slug carries no authority.
+ */
+export const USER_LAYERS = {
+  SUPER_ADMIN: "SUPER_ADMIN",
+  ADMIN: "ADMIN",
+  COMPANY_ADMIN: "COMPANY_ADMIN",
+  MODERATOR: "MODERATOR",
+  CUSTOMER: "CUSTOMER",
+} as const;
+
+export type UserLayer = (typeof USER_LAYERS)[keyof typeof USER_LAYERS];
+export const USER_LAYER_VALUES = Object.values(USER_LAYERS) as [UserLayer, ...UserLayer[]];
+
+/**
+ * The 5 seeded DEFAULT roles, one per user layer (see src/scripts/seed.ts).
+ * Unlike USER_LAYERS, this is NOT an authority source - it only identifies
+ * which Role document to fall back to (e.g. public registration's default
+ * Customer role). SUPER_ADMIN/COMPANY_ADMIN can create unlimited additional
+ * roles targeting the applicable layers; those roles have no fixed slug.
  */
 export const ROLE_SLUGS = {
   SUPER_ADMIN: "super-admin",
   ADMIN: "admin",
-  NORMAL_ADMIN: "normal-admin",
+  COMPANY_ADMIN: "company-admin",
   MODERATOR: "moderator",
   CUSTOMER: "customer",
 } as const;
@@ -53,7 +72,7 @@ export type RoleSlug = (typeof ROLE_SLUGS)[keyof typeof ROLE_SLUGS];
  */
 export const MENU_SCOPES = {
   SUPER_ADMIN_ADMIN: "super_admin_admin",
-  NORMAL_ADMIN_MODERATOR: "normal_admin_moderator",
+  COMPANY_ADMIN_MODERATOR: "company_admin_moderator",
 } as const;
 
 export type MenuScope = (typeof MENU_SCOPES)[keyof typeof MENU_SCOPES];

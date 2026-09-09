@@ -21,7 +21,7 @@ export const menuCreateSchema = z.object({
   resourceKey: z.string().trim().max(100).nullable().optional(),
   // Requirement #7: menu scope is required, never optional, on creation -
   // "Do not allow a menu to be created without a scope."
-  scope: z.enum([MENU_SCOPES.SUPER_ADMIN_ADMIN, MENU_SCOPES.NORMAL_ADMIN_MODERATOR]),
+  scope: z.enum([MENU_SCOPES.SUPER_ADMIN_ADMIN, MENU_SCOPES.COMPANY_ADMIN_MODERATOR]),
 });
 
 export type MenuCreateInput = z.infer<typeof menuCreateSchema>;

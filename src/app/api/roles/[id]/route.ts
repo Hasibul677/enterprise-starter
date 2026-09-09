@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { resolveCurrentAccess } from "@/lib/auth/current-user";
-import { requirePermission, requireSuperAdmin, requireAdminAreaAccess } from "@/lib/permissions/guard";
+import { requirePermission, requireAnyAdminAreaAccess } from "@/lib/permissions/guard";
 import { CORE_RESOURCES } from "@/lib/permissions/constants";
 import { roleUpdateSchema } from "@/features/roles/schemas/role-update.schema";
 import { updateRole, deactivateRole } from "@/services/role.service";
@@ -16,7 +16,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
   try {
     await connectToDatabase();
     const access = await resolveCurrentAccess();
-    requireAdminAreaAccess(access);
+    requireAnyAdminAreaAccess(access);
     requirePermission(access, CORE_RESOURCES.ROLES, "view");
 
     const { id: rawId } = await params;
@@ -34,14 +34,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     await connectToDatabase();
     const access = await resolveCurrentAccess();
-    requireSuperAdmin(access);
+    // Route proves the actor belongs in SOME admin-capable area; updateRole()
+    // enforces canManageRole() (SUPER_ADMIN, or the owning COMPANY_ADMIN).
+    requireAnyAdminAreaAccess(access);
     requirePermission(access, CORE_RESOURCES.ROLES, "edit");
 
     const { id: rawId } = await params;
     const id = parseObjectId(rawId);
     const body = await request.json();
     const input = roleUpdateSchema.parse(body);
-    const role = await updateRole(id, input, String(access.user._id));
+    const role = await updateRole(id, input, access);
 
     return ok({ role }, { code: "ROLE_UPDATED", message: "Role updated successfully." });
   } catch (err) {
@@ -53,12 +55,12 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
   try {
     await connectToDatabase();
     const access = await resolveCurrentAccess();
-    requireSuperAdmin(access);
+    requireAnyAdminAreaAccess(access);
     requirePermission(access, CORE_RESOURCES.ROLES, "delete");
 
     const { id: rawId } = await params;
     const id = parseObjectId(rawId);
-    const role = await deactivateRole(id, String(access.user._id));
+    const role = await deactivateRole(id, access);
 
     return ok({ role }, { code: "ROLE_DEACTIVATED", message: "Role deactivated successfully." });
   } catch (err) {

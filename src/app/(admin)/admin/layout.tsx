@@ -4,7 +4,7 @@ import { AuthenticatedShell } from "@/components/layout/authenticated-shell";
 
 /**
  * SUPER_ADMIN/ADMIN dashboard tree - completely separate from
- * (normal-admin) and (dashboard). Server-side gate: requireAdminAreaPage()
+ * (company-admin) and (dashboard). Server-side gate: requireAdminAreaPage()
  * re-resolves access from the DB on every request and redirects to /login
  * (unauthenticated) or /dashboard (authenticated but neither Super Admin
  * nor Admin) before any admin HTML is rendered. This only proves the actor

@@ -16,7 +16,7 @@ type Params = { params: Promise<{ id: string }> };
  * Requirement #9: view/assign a single user's PER-USER permission
  * overrides - distinct from PATCH /api/roles/[id], which edits a role
  * DEFINITION shared by every user holding that role. Serves both the
- * SUPER_ADMIN -> ADMIN and NORMAL_ADMIN -> MODERATOR flows through the same
+ * SUPER_ADMIN -> ADMIN and COMPANY_ADMIN -> MODERATOR flows through the same
  * authority helpers (see role-hierarchy.ts).
  */
 export async function GET(_request: NextRequest, { params }: Params) {
@@ -25,8 +25,8 @@ export async function GET(_request: NextRequest, { params }: Params) {
     const access = await resolveCurrentAccess();
     requireAnyAdminAreaAccess(access);
     // Gated on PERMISSIONS ("permissions.view"), matching requirement #5's
-    // granular permission list - SUPER_ADMIN and NORMAL_ADMIN hold it by
-    // default (seed.ts) since assigning permissions is core to those roles;
+    // granular permission list - SUPER_ADMIN and COMPANY_ADMIN hold it by
+    // default (seed.ts) since assigning permissions is core to those layers;
     // exactly WHICH target/resource can actually be touched is enforced far
     // more narrowly below, in getUserForActor()/canManageTargetUser().
     requirePermission(access, CORE_RESOURCES.PERMISSIONS, "view");

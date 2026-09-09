@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -12,57 +12,95 @@ import { FormField } from "@/components/forms/form-field";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { Select } from "@/components/ui/select";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/feedback/alert";
 import { applyServerErrors } from "@/components/forms/set-server-errors";
 import { apiClient, ApiClientError } from "@/lib/api-client/api-client";
-import type { RoleSlug } from "@/lib/permissions/constants";
+import { useAuthStore } from "@/stores/auth-store";
+import { CREATABLE_LAYERS_BY } from "@/lib/permissions/role-hierarchy";
+import { USER_LAYERS, type UserLayer } from "@/lib/permissions/constants";
 
 type RoleOption = { _id: string; name: string; slug: string };
 
+export const LAYER_LABELS: Record<UserLayer, string> = {
+  [USER_LAYERS.SUPER_ADMIN]: "Super Admin",
+  [USER_LAYERS.ADMIN]: "Admin",
+  [USER_LAYERS.COMPANY_ADMIN]: "Company Admin",
+  [USER_LAYERS.MODERATOR]: "Moderator",
+  [USER_LAYERS.CUSTOMER]: "Customer",
+};
+
 /**
- * Shared "create user" form (requirement #8). The role picker is either:
- * - a fixed, hidden role (`fixedRoleSlug`) - used by
- *   `/normal-admin/users/new`, which always creates a MODERATOR - or
- * - a picker showing whatever GET /api/roles/assignable returns - used by
- *   `/admin/users/new` (Super Admin sees ADMIN/NORMAL_ADMIN/CUSTOMER, Admin
- *   sees only CUSTOMER).
- * That endpoint (not GET /api/roles, which needs a `roles.view` grant an
- * Admin may not have and is admin-area-only so a Normal Admin can never
- * reach it at all) already returns only the roles the CURRENT actor is
- * authorized to assign - see role-hierarchy.ts CREATABLE_ROLES_BY. Either
- * way this is UX convenience only - the server independently re-validates
- * every requested role via canAssignRole() on submit (requirement #47).
+ * Shared "create user" form (requirement #5/#8/#9). Roles are dynamic and
+ * unlimited, but every user still belongs to exactly one of the 5 fixed
+ * layers (requirement #1/#10) - so this form is either:
+ * - locked to one layer via `fixedUserLayer` (used by
+ *   `/company-admin/users/new`, which always creates a MODERATOR) - the
+ *   layer picker is hidden entirely, or
+ * - a layer picker (used by `/admin/users/new`) showing whichever layers
+ *   CREATABLE_LAYERS_BY grants the current actor, followed by a role picker
+ *   scoped to whichever layer is currently selected.
+ * Both pickers only ever show what GET /api/roles/assignable?layer=...
+ * returns for the CURRENT actor - see role-hierarchy.ts CREATABLE_LAYERS_BY/
+ * CREATABLE_ROLE_LAYERS_BY. This is UX convenience only - the server
+ * independently re-validates the target layer and every requested role on
+ * submit (requirement #47).
  */
-export function UserCreateView({ basePath, fixedRoleSlug }: { basePath: string; fixedRoleSlug?: RoleSlug }) {
+export function UserCreateView({
+  basePath,
+  fixedUserLayer,
+  initialLayer,
+  listHref,
+}: {
+  basePath: string;
+  fixedUserLayer?: UserLayer;
+  /** Preselects the layer picker (e.g. from the management area's active tab) when it's one of `creatableLayers`; ignored otherwise. */
+  initialLayer?: UserLayer;
+  /** Where "Cancel"/success redirects to - defaults to `basePath` when omitted. */
+  listHref?: string;
+}) {
   const router = useRouter();
-  const [roles, setRoles] = useState<RoleOption[]>([]);
+  const isSuperAdmin = useAuthStore((s) => s.isSuperAdmin);
+  const actorLayer = useAuthStore((s) => s.userLayer);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const returnTo = listHref ?? basePath;
+
+  const creatableLayers = useMemo(
+    () => CREATABLE_LAYERS_BY[isSuperAdmin ? USER_LAYERS.SUPER_ADMIN : actorLayer] ?? [],
+    [isSuperAdmin, actorLayer]
+  );
+
+  const [selectedLayer, setSelectedLayer] = useState<UserLayer | undefined>(
+    fixedUserLayer ?? (initialLayer && creatableLayers.includes(initialLayer) ? initialLayer : creatableLayers[0])
+  );
+  const [roles, setRoles] = useState<RoleOption[]>([]);
 
   useEffect(() => {
-    apiClient.get<RoleOption[]>("/api/roles/assignable").then(setRoles).catch(() => setRoles([]));
-  }, []);
-
-  const roleOptions = fixedRoleSlug ? roles.filter((r) => r.slug === fixedRoleSlug) : roles;
-  const fixedRole = fixedRoleSlug ? roles.find((r) => r.slug === fixedRoleSlug) : undefined;
+    if (!selectedLayer) return;
+    apiClient
+      .get<RoleOption[]>("/api/roles/assignable", { query: { layer: selectedLayer } })
+      .then(setRoles)
+      .catch(() => setRoles([]));
+  }, [selectedLayer]);
 
   const form = useForm<UserCreateInput>({
     resolver: zodResolver(userCreateSchema),
     defaultValues: { firstName: "", lastName: "", email: "", password: "", roleIds: [], status: "ACTIVE" },
   });
 
-  // Once the fixed role resolves, lock the form to it - the picker for it is
-  // never even rendered, so the actor can't submit anything else.
+  // Changing layer invalidates whatever roles were picked for the old one.
   useEffect(() => {
-    if (fixedRole) form.setValue("roleIds", [fixedRole._id]);
-  }, [fixedRole, form]);
+    form.setValue("roleIds", []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLayer]);
 
   async function onSubmit(values: UserCreateInput) {
     setGlobalError(null);
     try {
-      await apiClient.post("/api/users", fixedRole ? { ...values, roleIds: [fixedRole._id] } : values);
-      router.push(basePath);
+      await apiClient.post("/api/users", values);
+      router.push(returnTo);
     } catch (err) {
       if (err instanceof ApiClientError) {
         applyServerErrors(form.setError, err.errors);
@@ -76,9 +114,11 @@ export function UserCreateView({ basePath, fixedRoleSlug }: { basePath: string; 
   return (
     <ContentContainer>
       <PageHeader
-        title={fixedRoleSlug ? "Add moderator" : "Add user"}
-        description={fixedRoleSlug ? "Create a new moderator account you manage." : "Create a new user account and assign roles."}
-        backHref={basePath}
+        title={fixedUserLayer === USER_LAYERS.MODERATOR ? "Add moderator" : "Add user"}
+        description={
+          fixedUserLayer === USER_LAYERS.MODERATOR ? "Create a new moderator account you manage." : "Create a new user account and assign roles."
+        }
+        backHref={returnTo}
       />
       {globalError && <div className="mb-4"><Alert variant="danger">{globalError}</Alert></div>}
       <Form form={form} onSubmit={onSubmit} className="max-w-lg">
@@ -96,18 +136,26 @@ export function UserCreateView({ basePath, fixedRoleSlug }: { basePath: string; 
         <FormField<UserCreateInput> name="password" label="Temporary password" required render={(f) => (
           <PasswordInput id={f.id} value={f.value as string} onChange={(e) => f.onChange(e.target.value)} onBlur={f.onBlur} invalid={f.invalid} />
         )} />
-        {!fixedRoleSlug && (
-          <FormField<UserCreateInput> name="roleIds" label="Roles" required render={(f) => (
-            <MultiSelect
-              options={roleOptions.map((r) => ({ value: r._id, label: r.name }))}
-              value={(f.value as string[]) ?? []}
-              onChange={(v) => f.onChange(v)}
+        {!fixedUserLayer && creatableLayers.length > 1 && (
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-ink">User layer</label>
+            <Select
+              value={selectedLayer}
+              onChange={(e) => setSelectedLayer(e.target.value as UserLayer)}
+              options={creatableLayers.map((layer) => ({ value: layer, label: LAYER_LABELS[layer] }))}
             />
-          )} />
+          </div>
         )}
+        <FormField<UserCreateInput> name="roleIds" label="Role" required render={(f) => (
+          <MultiSelect
+            options={roles.map((r) => ({ value: r._id, label: r.name }))}
+            value={(f.value as string[]) ?? []}
+            onChange={(v) => f.onChange(v)}
+          />
+        )} />
         <div className="flex gap-2">
           <SubmitButton loading={form.formState.isSubmitting}>Create user</SubmitButton>
-          <Button type="button" variant="secondary" onClick={() => router.push(basePath)}>Cancel</Button>
+          <Button type="button" variant="secondary" onClick={() => router.push(returnTo)}>Cancel</Button>
         </div>
       </Form>
     </ContentContainer>

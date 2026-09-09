@@ -1,6 +1,7 @@
 import { AuthorizationError } from "@/lib/errors/app-error";
 import { hasPermission, hasAnyPermission, hasAllPermissions, type PermissionCheck } from "./merge";
-import { isAdminAreaRole, isNormalAdminAreaRole } from "./role-hierarchy";
+import { isAdminAreaLayer, isCompanyAdminAreaLayer } from "./role-hierarchy";
+import { USER_LAYERS } from "./constants";
 import type { ResolvedAccess } from "@/lib/auth/current-user";
 import type { PermissionAction } from "./constants";
 
@@ -49,32 +50,44 @@ export function requireSuperAdmin(access: ResolvedAccess) {
  * APIs it calls). SUPER_ADMIN always passes; ADMIN passes too, but every
  * individual action inside still goes through requirePermission() - this
  * only proves the actor belongs in this dashboard at all, never that they
- * can perform any specific action in it. NORMAL_ADMIN/MODERATOR/CUSTOMER
+ * can perform any specific action in it. COMPANY_ADMIN/MODERATOR/CUSTOMER
  * never pass, no matter what permissions they hold (requirement #3).
  */
 export function requireAdminAreaAccess(access: ResolvedAccess) {
-  if (access.isSuperAdmin || isAdminAreaRole(access.roleSlugs)) return;
+  if (access.isSuperAdmin || isAdminAreaLayer(access.userLayer)) return;
   throw new AuthorizationError("This action requires access to the Super Admin / Admin area.");
 }
 
 /**
- * Gate for the shared NORMAL_ADMIN/MODERATOR dashboard tree
- * (`/normal-admin/**`), completely separate from requireAdminAreaAccess()
+ * Gate for the shared COMPANY_ADMIN/MODERATOR dashboard tree
+ * (`/company-admin/**`), completely separate from requireAdminAreaAccess()
  * (requirement #3/#4). Super Admin can still reach it (requirement #2 -
- * "can access ... Normal Admin/Moderator management routes").
+ * "can access ... Company Admin/Moderator management routes").
  */
-export function requireNormalAdminAreaAccess(access: ResolvedAccess) {
-  if (access.isSuperAdmin || isNormalAdminAreaRole(access.roleSlugs)) return;
-  throw new AuthorizationError("This action requires access to the Normal Admin / Moderator area.");
+export function requireCompanyAdminAreaAccess(access: ResolvedAccess) {
+  if (access.isSuperAdmin || isCompanyAdminAreaLayer(access.userLayer)) return;
+  throw new AuthorizationError("This action requires access to the Company Admin / Moderator area.");
+}
+
+/**
+ * Gate for who may start an impersonation ("Login as user") session at all -
+ * Super Admin (any applicable lower layer) or Company Admin (its own
+ * Moderators only, per-target eligibility enforced separately by
+ * getImpersonationIneligibleReason). Admin, Moderator, and Customer can
+ * never impersonate anyone, regardless of any permission they hold.
+ */
+export function requireImpersonationActor(access: ResolvedAccess) {
+  if (access.isSuperAdmin || access.userLayer === USER_LAYERS.COMPANY_ADMIN) return;
+  throw new AuthorizationError("This action requires Super Admin or Company Admin access.");
 }
 
 /**
  * Used by the shared Users API, which legitimately serves both admin-area
- * actors (managing ADMIN/CUSTOMER accounts) and normal-admin-area actors
+ * actors (managing ADMIN/CUSTOMER accounts) and company-admin-area actors
  * (managing their own MODERATORs) - see user.service.ts for the
  * finer-grained per-user authority this does NOT express on its own.
  */
 export function requireAnyAdminAreaAccess(access: ResolvedAccess) {
-  if (access.isSuperAdmin || isAdminAreaRole(access.roleSlugs) || isNormalAdminAreaRole(access.roleSlugs)) return;
+  if (access.isSuperAdmin || isAdminAreaLayer(access.userLayer) || isCompanyAdminAreaLayer(access.userLayer)) return;
   throw new AuthorizationError("This action requires administrative access.");
 }

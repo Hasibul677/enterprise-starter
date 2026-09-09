@@ -13,6 +13,23 @@ export const roleRepository = {
   async list() {
     return RoleModel.find().sort({ createdAt: -1 }).lean().exec();
   },
+  /** Roles a COMPANY_ADMIN may see/assign: the shared MODERATOR-layer default(s) plus its own custom roles - never a peer's. */
+  async listForModeratorLayerOwner(actorUserId: string) {
+    return RoleModel.find({ userLayer: "MODERATOR", $or: [{ managedBy: null }, { managedBy: actorUserId }] })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+  },
+  async findByUserLayer(userLayer: string) {
+    return RoleModel.find({ userLayer, isActive: true }).sort({ createdAt: -1 }).lean().exec();
+  },
+  /** Active-only variant of listForModeratorLayerOwner, for the "assignable roles" dropdown on a Create Moderator form. */
+  async findAssignableForModeratorLayerOwner(actorUserId: string) {
+    return RoleModel.find({ userLayer: "MODERATOR", isActive: true, $or: [{ managedBy: null }, { managedBy: actorUserId }] })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+  },
   async findById(id: string) {
     return RoleModel.findById(id).exec();
   },

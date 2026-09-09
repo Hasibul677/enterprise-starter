@@ -1,7 +1,8 @@
 "use client";
 
 import { create } from "zustand";
-import type { PermissionMap, RoleSlug } from "@/lib/permissions/constants";
+import { USER_LAYERS } from "@/lib/permissions/constants";
+import type { PermissionMap, UserLayer } from "@/lib/permissions/constants";
 
 export type SessionUser = {
   _id: string;
@@ -23,20 +24,27 @@ type AuthState = {
   user: SessionUser | null;
   permissions: PermissionMap;
   isSuperAdmin: boolean;
-  roleSlugs: RoleSlug[];
+  /** The single source of hierarchy authority on the client - see role-hierarchy.ts. */
+  userLayer: UserLayer;
+  /** Display-only role slugs/labels (e.g. UI badges) - NEVER used for authority. */
+  roleSlugs: string[];
   menus: MenuTreeNode[];
   warning: boolean;
   /** Requirement #21 - true iff the CURRENT session is a Super Admin impersonating this user. */
   isImpersonating: boolean;
+  /** Baseline compared against GET /api/auth/session-state by use-permission-sync.ts to detect stale permissions/menus. */
+  permissionVersion: number;
   hydrated: boolean;
   setSession: (payload: {
     user: SessionUser;
     permissions: PermissionMap;
     isSuperAdmin: boolean;
-    roleSlugs: RoleSlug[];
+    userLayer: UserLayer;
+    roleSlugs: string[];
     menus: MenuTreeNode[];
     warning: boolean;
     isImpersonating?: boolean;
+    permissionVersion?: number;
   }) => void;
   clearSession: () => void;
 };
@@ -53,21 +61,26 @@ export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   permissions: {},
   isSuperAdmin: false,
+  userLayer: USER_LAYERS.CUSTOMER,
   roleSlugs: [],
   menus: [],
   warning: false,
   isImpersonating: false,
+  permissionVersion: 0,
   hydrated: false,
-  setSession: (payload) => set({ ...payload, isImpersonating: payload.isImpersonating ?? false, hydrated: true }),
+  setSession: (payload) =>
+    set({ ...payload, isImpersonating: payload.isImpersonating ?? false, permissionVersion: payload.permissionVersion ?? 0, hydrated: true }),
   clearSession: () =>
     set({
       user: null,
       permissions: {},
       isSuperAdmin: false,
+      userLayer: USER_LAYERS.CUSTOMER,
       roleSlugs: [],
       menus: [],
       warning: false,
       isImpersonating: false,
+      permissionVersion: 0,
       hydrated: true,
     }),
 }));
