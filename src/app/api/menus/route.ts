@@ -6,6 +6,7 @@ import { CORE_RESOURCES } from "@/lib/permissions/constants";
 import { menuCreateSchema } from "@/features/menus/schemas/menu-create.schema";
 import { createMenu, listMenus } from "@/services/menu.service";
 import { ok, created, handleRouteError } from "@/lib/api/response";
+import { requireCsrf } from "@/lib/security/csrf";
 
 export async function GET() {
   try {
@@ -24,6 +25,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     await connectToDatabase();
+    await requireCsrf(request);
     const access = await resolveCurrentAccess();
     requireAdminAreaAccess(access);
     requirePermission(access, CORE_RESOURCES.MENUS, "add");

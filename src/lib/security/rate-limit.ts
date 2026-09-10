@@ -61,9 +61,37 @@ export function getRateLimiter(action: keyof typeof limiters): RateLimiter {
   return limiters[action];
 }
 
-/** Builds a rate-limit key from the client IP (best-effort) + the action. */
-export function rateLimitKeyFromRequest(request: Request, action: string): string {
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  const ip = forwardedFor?.split(",")[0]?.trim() ?? "unknown";
-  return `${action}:${ip}`;
+/**
+ * Builds a rate-limit key from the client IP + the action.
+ *
+ * X-Forwarded-For is entirely client-controllable input unless a real
+ * reverse proxy in front of this app overwrites/appends to it - trusting the
+ * first (or any single) value unconditionally lets an attacker send a fresh
+ * spoofed value on every request and get a brand-new bucket each time,
+ * bypassing the limiter completely. This module doesn't know its own
+ * deployment topology, so trusting the header is opt-in via
+ * `trustedProxyHops` (see TRUSTED_PROXY_HOPS in src/config/env.ts - callers
+ * pass `getEnv().TRUSTED_PROXY_HOPS`): standard "trust proxy: N" semantics,
+ * where the trustworthy IP is the Nth entry from the RIGHT of the
+ * X-Forwarded-For chain (each trusted hop appends what it saw; everything to
+ * the left of that is attacker-controllable input the proxy chain merely
+ * passed through).
+ *
+ * With the safe default (0 trusted hops - i.e. not configured for the real
+ * deployment), the header is never trusted and every request collapses into
+ * one shared per-action bucket - weaker per-client granularity, but no
+ * longer spoofable into an unlimited number of buckets. Pure function
+ * (no process.env access) so it stays trivial to unit test.
+ */
+export function rateLimitKeyFromRequest(request: Request, action: string, trustedProxyHops: number): string {
+  if (trustedProxyHops > 0) {
+    const chain = request.headers
+      .get("x-forwarded-for")
+      ?.split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    const trustedIp = chain && chain.length >= trustedProxyHops ? chain[chain.length - trustedProxyHops] : undefined;
+    if (trustedIp) return `${action}:${trustedIp}`;
+  }
+  return `${action}:unknown`;
 }

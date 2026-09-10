@@ -3,20 +3,15 @@ import { connectToDatabase } from "@/lib/db/mongoose";
 import { resolveCurrentAccess } from "@/lib/auth/current-user";
 import { revokeAllSessionsForUser } from "@/lib/auth/session-service";
 import { clearAuthCookies } from "@/lib/security/cookies";
-import { verifyCsrf } from "@/lib/security/csrf";
-import { cookies } from "next/headers";
-import { CSRF_COOKIE } from "@/lib/security/cookies";
-import { ok, handleRouteError, fail } from "@/lib/api/response";
+import { requireCsrf } from "@/lib/security/csrf";
+import { ok, handleRouteError } from "@/lib/api/response";
 import { auditLogRepository } from "@/repositories/audit-log.repository";
 import { userRepository } from "@/repositories/user.repository";
 
 export async function POST(request: NextRequest) {
   try {
     await connectToDatabase();
-    const csrfCookie = (await cookies()).get(CSRF_COOKIE)?.value;
-    if (!verifyCsrf(request, csrfCookie)) {
-      return fail(403, "CSRF_INVALID", "Invalid CSRF token.");
-    }
+    await requireCsrf(request);
 
     const access = await resolveCurrentAccess();
     const userId = String(access.user._id);

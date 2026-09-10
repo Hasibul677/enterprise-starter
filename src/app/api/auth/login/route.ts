@@ -14,7 +14,10 @@ import type { RoleDocument } from "@/models/role.model";
 
 export async function POST(request: NextRequest) {
   try {
-    const rateLimit = await getRateLimiter("login").consume(rateLimitKeyFromRequest(request, "login"));
+    const env = getEnv();
+    const rateLimit = await getRateLimiter("login").consume(
+      rateLimitKeyFromRequest(request, "login", env.TRUSTED_PROXY_HOPS)
+    );
     if (!rateLimit.allowed) {
       return fail(429, "RATE_LIMITED", "Too many login attempts. Please try again later.");
     }
@@ -30,7 +33,6 @@ export async function POST(request: NextRequest) {
       ipAddress: request.headers.get("x-forwarded-for") ?? undefined,
     });
 
-    const env = getEnv();
     const csrfToken = generateCsrfToken();
     await setAuthCookies({
       accessToken,

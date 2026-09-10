@@ -4,10 +4,13 @@ import { registerSchema } from "@/features/auth/schemas/register.schema";
 import { registerUser } from "@/lib/auth/auth-service";
 import { created, fail, handleRouteError } from "@/lib/api/response";
 import { getRateLimiter, rateLimitKeyFromRequest } from "@/lib/security/rate-limit";
+import { getEnv } from "@/config/env";
 
 export async function POST(request: NextRequest) {
   try {
-    const rateLimit = await getRateLimiter("register").consume(rateLimitKeyFromRequest(request, "register"));
+    const rateLimit = await getRateLimiter("register").consume(
+      rateLimitKeyFromRequest(request, "register", getEnv().TRUSTED_PROXY_HOPS)
+    );
     if (!rateLimit.allowed) {
       return fail(429, "RATE_LIMITED", "Too many registration attempts. Please try again later.");
     }

@@ -460,6 +460,33 @@ export function getImpersonationIneligibleReason(params: {
   return null;
 }
 
+/**
+ * User-status counterpart to deactivateRole()'s "last active Super Admin
+ * access path" guard: would applying `nextStatus` to a user currently in
+ * `targetLayer`/`previousStatus` leave the system with zero active Super
+ * Admins? Only BLOCKED/DISABLED actually revoke login/authority (see
+ * current-user.ts resolveCurrentAccess() - WARNING does not), so only those
+ * transitions are considered "restrictive" here, matching the same
+ * definition user.service.ts#updateUser already uses for its tokenVersion
+ * bump. Pure (no DB access) so it stays trivial to unit test, same as every
+ * other function in this file - the caller (user.service.ts#updateUser)
+ * supplies `otherActiveSuperAdminCount`, the DB count of ACTIVE
+ * SUPER_ADMIN-layer users EXCLUDING this target.
+ */
+export function wouldLockOutLastActiveSuperAdmin(params: {
+  targetLayer: UserLayer;
+  previousStatus: string;
+  nextStatus: string | undefined;
+  otherActiveSuperAdminCount: number;
+}): boolean {
+  const { targetLayer, previousStatus, nextStatus, otherActiveSuperAdminCount } = params;
+  if (targetLayer !== USER_LAYERS.SUPER_ADMIN) return false;
+  if (!nextStatus || nextStatus === previousStatus) return false;
+  if (previousStatus !== "ACTIVE") return false; // wasn't active anyway - this change isn't what removes it
+  if (nextStatus !== "BLOCKED" && nextStatus !== "DISABLED") return false;
+  return otherActiveSuperAdminCount === 0;
+}
+
 /** The dashboard tree a user should land on after login (requirement #4). */
 export function getDefaultLandingRoute(access: { isSuperAdmin: boolean; userLayer: UserLayer }): string {
   if (access.isSuperAdmin || isAdminAreaLayer(access.userLayer)) return "/admin";

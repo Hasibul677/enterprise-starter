@@ -9,6 +9,7 @@ import {
   canGrantPermissionOverride,
   canManageTargetUser,
   canViewTargetUser,
+  wouldLockOutLastActiveSuperAdmin,
   VIEWABLE_TARGET_LAYERS_BY,
 } from "@/lib/permissions/role-hierarchy";
 import type { ResolvedAccess } from "@/lib/auth/current-user";
@@ -295,6 +296,29 @@ export async function updateUser(userId: string, input: UserUpdateInput, access:
   }
 
   const previousStatus = target.status;
+
+  // Requirement #10/#33 - refuse a status change that would leave the
+  // system with zero active Super Admins, whether that's an admin
+  // disabling another Super Admin or (since self-status-change isn't
+  // blocked the way self-role-change is above) a Super Admin disabling
+  // itself. Only fires when the target is actually SUPER_ADMIN-layer and
+  // the status is actually changing, so this never adds a query to the
+  // common case of editing an ordinary user.
+  if (input.status && targetLayer === USER_LAYERS.SUPER_ADMIN) {
+    const otherActiveSuperAdminCount = await userRepository.countActiveByLayer(USER_LAYERS.SUPER_ADMIN, userId);
+    if (
+      wouldLockOutLastActiveSuperAdmin({
+        targetLayer,
+        previousStatus,
+        nextStatus: input.status,
+        otherActiveSuperAdminCount,
+      })
+    ) {
+      throw new ValidationError("Cannot change status: this would leave the system with no active Super Admin.", [
+        { field: "status", message: "At least one other active Super Admin must remain active." },
+      ]);
+    }
+  }
 
   const updated = await userRepository.updateById(userId, {
     ...(input.firstName ? { firstName: input.firstName } : {}),

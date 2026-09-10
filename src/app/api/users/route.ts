@@ -7,6 +7,7 @@ import { userCreateSchema } from "@/features/users/schemas/user-create.schema";
 import { userListQuerySchema } from "@/features/users/schemas/user-update.schema";
 import { adminCreateUser, listUsers } from "@/services/user.service";
 import { ok, created, handleRouteError } from "@/lib/api/response";
+import { requireCsrf } from "@/lib/security/csrf";
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,6 +32,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     await connectToDatabase();
+    await requireCsrf(request);
     const access = await resolveCurrentAccess();
     // Example of requirement #13 in practice: users.view = true, users.add = false -> 403 here.
     requireAnyAdminAreaAccess(access);

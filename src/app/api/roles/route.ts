@@ -6,6 +6,7 @@ import { CORE_RESOURCES } from "@/lib/permissions/constants";
 import { roleCreateSchema } from "@/features/roles/schemas/role-create.schema";
 import { createRole, listRolesForActor } from "@/services/role.service";
 import { ok, created, handleRouteError } from "@/lib/api/response";
+import { requireCsrf } from "@/lib/security/csrf";
 
 export async function GET() {
   try {
@@ -28,6 +29,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     await connectToDatabase();
+    await requireCsrf(request);
     const access = await resolveCurrentAccess();
     // Route proves the actor belongs in SOME admin-capable area at all;
     // createRole() enforces exactly which layer they may target (SUPER_ADMIN

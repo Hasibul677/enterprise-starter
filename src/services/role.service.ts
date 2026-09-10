@@ -139,15 +139,21 @@ export async function deactivateRole(roleId: string, access: ResolvedAccess) {
     throw new AuthorizationError("You do not have authority to manage this role.");
   }
 
-  if (role.isSystem) {
-    throw new ValidationError("System roles cannot be deleted or deactivated.");
-  }
-
+  // Checked BEFORE the blanket isSystem guard below so this specific
+  // condition is actually reachable (and surfaces its own precise error)
+  // rather than being permanently shadowed by isSystem - the seeded
+  // SUPER_ADMIN role is always isSystem: true, so today isSystem alone
+  // already blocks every deactivation of it unconditionally; this check
+  // stays meaningful as its own safety net regardless of that.
   if (role.slug === SUPER_ADMIN_ROLE_SLUG) {
     const otherActiveSuperAdmins = await UserModel.countDocuments({ roles: role._id, status: "ACTIVE" });
     if (otherActiveSuperAdmins <= 1) {
       throw new ValidationError("Cannot remove the last active Super Admin access path.");
     }
+  }
+
+  if (role.isSystem) {
+    throw new ValidationError("System roles cannot be deleted or deactivated.");
   }
 
   const updated = await roleRepository.deactivateById(roleId);

@@ -7,6 +7,7 @@ import { roleUpdateSchema } from "@/features/roles/schemas/role-update.schema";
 import { updateRole, deactivateRole, getRoleForViewer } from "@/services/role.service";
 import { ok, handleRouteError } from "@/lib/api/response";
 import { parseObjectId } from "@/lib/validation/object-id";
+import { requireCsrf } from "@/lib/security/csrf";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -33,6 +34,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     await connectToDatabase();
+    await requireCsrf(request);
     const access = await resolveCurrentAccess();
     // Route proves the actor belongs in SOME admin-capable area; updateRole()
     // enforces canManageRole() (SUPER_ADMIN, or the owning COMPANY_ADMIN).
@@ -51,9 +53,10 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_request: NextRequest, { params }: Params) {
+export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     await connectToDatabase();
+    await requireCsrf(request);
     const access = await resolveCurrentAccess();
     requireAnyAdminAreaAccess(access);
     requirePermission(access, CORE_RESOURCES.ROLES, "delete");

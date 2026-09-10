@@ -8,6 +8,7 @@ import { userPermissionsUpdateSchema } from "@/features/users/schemas/user-permi
 import { getUserForActor, setUserPermissionOverrides } from "@/services/user.service";
 import { ok, handleRouteError } from "@/lib/api/response";
 import { parseObjectId } from "@/lib/validation/object-id";
+import { requireCsrf } from "@/lib/security/csrf";
 import type { RoleDocument } from "@/models/role.model";
 
 type Params = { params: Promise<{ id: string }> };
@@ -50,6 +51,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     await connectToDatabase();
+    await requireCsrf(request);
     const access = await resolveCurrentAccess();
     requireAnyAdminAreaAccess(access);
     // "permissions.assign" (requirement #5) - reuses the "edit" action like

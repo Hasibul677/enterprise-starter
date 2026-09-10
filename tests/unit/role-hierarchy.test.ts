@@ -13,6 +13,7 @@ import {
   getViewableLayerCandidates,
   getVisibleUserManagementLayers,
   resolvePostLoginRedirect,
+  wouldLockOutLastActiveSuperAdmin,
   VIEWABLE_TARGET_LAYERS_BY,
 } from "@/lib/permissions/role-hierarchy";
 import { CORE_RESOURCES, USER_LAYERS, type PermissionMap } from "@/lib/permissions/constants";
@@ -833,5 +834,95 @@ describe("resolvePostLoginRedirect (root cause fix - a stale/forged redirectTo m
     expect(
       resolvePostLoginRedirect("https://evil.example.com/admin", { isSuperAdmin: true, userLayer: SUPER_ADMIN })
     ).toBe("/admin");
+  });
+});
+
+describe("wouldLockOutLastActiveSuperAdmin (P0 fix - last active Super Admin cannot be disabled)", () => {
+  it("blocks disabling the last active Super Admin", () => {
+    expect(
+      wouldLockOutLastActiveSuperAdmin({
+        targetLayer: SUPER_ADMIN,
+        previousStatus: "ACTIVE",
+        nextStatus: "DISABLED",
+        otherActiveSuperAdminCount: 0,
+      })
+    ).toBe(true);
+  });
+
+  it("blocks blocking the last active Super Admin", () => {
+    expect(
+      wouldLockOutLastActiveSuperAdmin({
+        targetLayer: SUPER_ADMIN,
+        previousStatus: "ACTIVE",
+        nextStatus: "BLOCKED",
+        otherActiveSuperAdminCount: 0,
+      })
+    ).toBe(true);
+  });
+
+  it("allows disabling a Super Admin when another active one remains", () => {
+    expect(
+      wouldLockOutLastActiveSuperAdmin({
+        targetLayer: SUPER_ADMIN,
+        previousStatus: "ACTIVE",
+        nextStatus: "DISABLED",
+        otherActiveSuperAdminCount: 1,
+      })
+    ).toBe(false);
+  });
+
+  it("never blocks a non-Super-Admin layer", () => {
+    expect(
+      wouldLockOutLastActiveSuperAdmin({
+        targetLayer: ADMIN,
+        previousStatus: "ACTIVE",
+        nextStatus: "DISABLED",
+        otherActiveSuperAdminCount: 0,
+      })
+    ).toBe(false);
+  });
+
+  it("never blocks a status change that isn't actually restrictive (e.g. ACTIVE -> WARNING)", () => {
+    expect(
+      wouldLockOutLastActiveSuperAdmin({
+        targetLayer: SUPER_ADMIN,
+        previousStatus: "ACTIVE",
+        nextStatus: "WARNING",
+        otherActiveSuperAdminCount: 0,
+      })
+    ).toBe(false);
+  });
+
+  it("never blocks when no status change was requested", () => {
+    expect(
+      wouldLockOutLastActiveSuperAdmin({
+        targetLayer: SUPER_ADMIN,
+        previousStatus: "ACTIVE",
+        nextStatus: undefined,
+        otherActiveSuperAdminCount: 0,
+      })
+    ).toBe(false);
+  });
+
+  it("never blocks a Super Admin that was already inactive (this change isn't what removes the last one)", () => {
+    expect(
+      wouldLockOutLastActiveSuperAdmin({
+        targetLayer: SUPER_ADMIN,
+        previousStatus: "DISABLED",
+        nextStatus: "BLOCKED",
+        otherActiveSuperAdminCount: 0,
+      })
+    ).toBe(false);
+  });
+
+  it("never blocks re-activating a Super Admin", () => {
+    expect(
+      wouldLockOutLastActiveSuperAdmin({
+        targetLayer: SUPER_ADMIN,
+        previousStatus: "DISABLED",
+        nextStatus: "ACTIVE",
+        otherActiveSuperAdminCount: 0,
+      })
+    ).toBe(false);
   });
 });

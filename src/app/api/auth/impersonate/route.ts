@@ -5,7 +5,7 @@ import { requireImpersonationActor } from "@/lib/permissions/guard";
 import { impersonateUser } from "@/lib/auth/auth-service";
 import { impersonateSchema } from "@/features/auth/schemas/impersonate.schema";
 import { setAuthCookies } from "@/lib/security/cookies";
-import { generateCsrfToken } from "@/lib/security/csrf";
+import { generateCsrfToken, requireCsrf } from "@/lib/security/csrf";
 import { getEnv } from "@/config/env";
 import { durationToSeconds } from "@/lib/date/duration-seconds";
 import { ok, fail, handleRouteError } from "@/lib/api/response";
@@ -28,12 +28,15 @@ import { getRateLimiter, rateLimitKeyFromRequest } from "@/lib/security/rate-lim
  */
 export async function POST(request: NextRequest) {
   try {
-    const rateLimit = await getRateLimiter("impersonate").consume(rateLimitKeyFromRequest(request, "impersonate"));
+    const rateLimit = await getRateLimiter("impersonate").consume(
+      rateLimitKeyFromRequest(request, "impersonate", getEnv().TRUSTED_PROXY_HOPS)
+    );
     if (!rateLimit.allowed) {
       return fail(429, "RATE_LIMITED", "Too many impersonation attempts. Please try again later.");
     }
 
     await connectToDatabase();
+    await requireCsrf(request);
     const access = await resolveCurrentAccess();
     requireImpersonationActor(access);
 

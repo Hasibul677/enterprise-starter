@@ -21,7 +21,12 @@ function getCsrfTokenFromCookie(): string | null {
 
 async function performRefresh(): Promise<boolean> {
   if (!refreshPromise) {
-    refreshPromise = fetch("/api/auth/refresh", { method: "POST", credentials: "include" })
+    const csrfToken = getCsrfTokenFromCookie();
+    refreshPromise = fetch("/api/auth/refresh", {
+      method: "POST",
+      credentials: "include",
+      headers: csrfToken ? { "x-csrf-token": csrfToken } : undefined,
+    })
       .then((res) => res.ok)
       .catch(() => false)
       .finally(() => {

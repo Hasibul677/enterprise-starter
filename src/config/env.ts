@@ -22,6 +22,16 @@ const envSchema = z.object({
   SUPER_ADMIN_EMAIL: z.string().email(),
   SUPER_ADMIN_PASSWORD: z.string().min(8),
 
+  // How many reverse proxies in front of this app are trusted to correctly
+  // APPEND the real client IP to X-Forwarded-For (see rate-limit.ts
+  // rateLimitKeyFromRequest()). X-Forwarded-For is otherwise entirely
+  // client-controllable, so it is never trusted unless this is explicitly
+  // set to match the actual deployment - default 0 means "no trusted
+  // proxy configured", not "no proxy exists". Set to the exact number of
+  // hops (1 for a single load balancer/reverse proxy, 2 if there's a CDN in
+  // front of that, etc.) once the real deployment topology is known.
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
+
   NEXT_PUBLIC_APP_NAME: z.string().default("Enterprise Starter"),
 });
 

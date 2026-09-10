@@ -71,3 +71,9 @@ export class AccountStatusError extends AppError {
     super(message, 403, code);
   }
 }
+
+export class CsrfError extends AppError {
+  constructor(message = "Invalid CSRF token.") {
+    super(message, 403, "CSRF_INVALID");
+  }
+}

@@ -7,6 +7,7 @@ import { userUpdateSchema } from "@/features/users/schemas/user-update.schema";
 import { updateUser, getUserForViewer } from "@/services/user.service";
 import { ok, handleRouteError } from "@/lib/api/response";
 import { parseObjectId } from "@/lib/validation/object-id";
+import { requireCsrf } from "@/lib/security/csrf";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -30,6 +31,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     await connectToDatabase();
+    await requireCsrf(request);
     const access = await resolveCurrentAccess();
     requireAnyAdminAreaAccess(access);
     requirePermission(access, CORE_RESOURCES.USERS, "edit");
@@ -46,9 +48,10 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_request: NextRequest, { params }: Params) {
+export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     await connectToDatabase();
+    await requireCsrf(request);
     const access = await resolveCurrentAccess();
     // Safe-deactivate rather than hard delete, preserving audit trail integrity.
     requireAnyAdminAreaAccess(access);

@@ -1,8 +1,9 @@
+import { NextRequest } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongoose";
 import { resolveCurrentAccess } from "@/lib/auth/current-user";
 import { endImpersonation } from "@/lib/auth/auth-service";
 import { setAuthCookies } from "@/lib/security/cookies";
-import { generateCsrfToken } from "@/lib/security/csrf";
+import { generateCsrfToken, requireCsrf } from "@/lib/security/csrf";
 import { getEnv } from "@/config/env";
 import { durationToSeconds } from "@/lib/date/duration-seconds";
 import { ok, handleRouteError } from "@/lib/api/response";
@@ -15,9 +16,10 @@ import { ok, handleRouteError } from "@/lib/api/response";
  * claim points at a still-valid, still-active Super Admin account - no
  * password re-entry needed.
  */
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
     await connectToDatabase();
+    await requireCsrf(request);
     const access = await resolveCurrentAccess();
 
     const { accessToken, refreshToken, redirectTo } = await endImpersonation({ access });

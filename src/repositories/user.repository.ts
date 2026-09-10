@@ -69,6 +69,16 @@ export const userRepository = {
   },
 
   /**
+   * Used by user.service.ts#updateUser's last-active-Super-Admin guard -
+   * counts ACTIVE users in `layer`, excluding `excludeUserId` (the user
+   * whose status is about to change), so the caller can tell whether this
+   * user is the only thing keeping that layer's authority active.
+   */
+  async countActiveByLayer(layer: string, excludeUserId: string) {
+    return UserModel.countDocuments({ userLayer: layer, status: "ACTIVE", _id: { $ne: excludeUserId } });
+  },
+
+  /**
    * One aggregation, scoped by the SAME `scopeFilter` shape `list()` already
    * takes (see user.service.ts#buildUserListScopeFilter) - dashboard.service.ts
    * shapes the raw facet buckets into typed stats. Raw here on purpose (no

@@ -9,6 +9,7 @@ import { menuRepository } from "@/repositories/menu.repository";
 import { ok, handleRouteError } from "@/lib/api/response";
 import { parseObjectId } from "@/lib/validation/object-id";
 import { NotFoundError } from "@/lib/errors/app-error";
+import { requireCsrf } from "@/lib/security/csrf";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -33,6 +34,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     await connectToDatabase();
+    await requireCsrf(request);
     const access = await resolveCurrentAccess();
     requireAdminAreaAccess(access);
     requirePermission(access, CORE_RESOURCES.MENUS, "edit");
@@ -49,9 +51,10 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_request: NextRequest, { params }: Params) {
+export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     await connectToDatabase();
+    await requireCsrf(request);
     const access = await resolveCurrentAccess();
     requireAdminAreaAccess(access);
     requirePermission(access, CORE_RESOURCES.MENUS, "delete");
