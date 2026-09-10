@@ -3,6 +3,18 @@ import { AuthHero } from "@/components/auth/auth-hero";
 import { AuthCardFrame } from "@/components/auth/auth-card-frame";
 
 /**
+ * Required for the nonce-based CSP in src/proxy.ts to actually reach this
+ * route group's pages: a nonce only exists per-request, and Next.js can
+ * only inject it into a page's script tags during server-side rendering -
+ * a statically-generated page (this group's default, since /login and
+ * /register have no per-request data of their own) is built once with no
+ * request in scope, so no nonce could ever be applied to it. Every other
+ * route in this app is already dynamically rendered; this is the one group
+ * that needed to opt in.
+ */
+export const dynamic = "force-dynamic";
+
+/**
  * Single unified gradient owns the ENTIRE viewport (both the branding panel
  * and the form sit transparently on top of it, as one continuous surface -
  * no separate colored/white column). Fixed to `h-dvh` + `overflow-hidden` so

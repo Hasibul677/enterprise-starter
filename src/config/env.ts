@@ -33,6 +33,15 @@ const envSchema = z.object({
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
 
   NEXT_PUBLIC_APP_NAME: z.string().default("Enterprise Starter"),
+
+  // Optional "Demo Account" panel on /login (see demo-account-panel.tsx) -
+  // deliberately public (NEXT_PUBLIC_*, inlined into the client bundle) and
+  // deliberately optional. Point these at a dedicated, low-privilege
+  // (non-Super-Admin) review account only - never a real user's
+  // credentials. Leave BOTH unset to hide the panel entirely; the login
+  // page works identically either way.
+  NEXT_PUBLIC_DEMO_EMAIL: z.string().optional(),
+  NEXT_PUBLIC_DEMO_PASSWORD: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

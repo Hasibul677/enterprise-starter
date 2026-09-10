@@ -20,6 +20,7 @@ import { apiClient, ApiClientError } from "@/lib/api-client/api-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { resolvePostLoginRedirect } from "@/lib/permissions/role-hierarchy";
 import type { UserLayer } from "@/lib/permissions/constants";
+import { DemoAccountPanel } from "./demo-account-panel";
 
 const fieldClassName = "h-10 rounded-xl bg-paper/50 transition-all duration-200 focus:bg-surface focus:ring-4";
 
@@ -33,6 +34,13 @@ function LoginForm() {
     resolver: zodResolver(loginSchema),
     defaultValues: { email: "", password: "" },
   });
+
+  // Fills the fields only - the user still has to click Sign in themselves,
+  // same as if they'd typed the values in by hand.
+  function handleUseDemoAccount(email: string, password: string) {
+    form.setValue("email", email, { shouldValidate: true, shouldDirty: true });
+    form.setValue("password", password, { shouldValidate: true, shouldDirty: true });
+  }
 
   async function onSubmit(values: LoginInput) {
     setGlobalError(null);
@@ -68,6 +76,8 @@ function LoginForm() {
         <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Sign in to your account</h1>
         <p className="mt-1 text-sm text-ink-soft">Enter your credentials to access your dashboard.</p>
       </div>
+
+      <DemoAccountPanel onUseDemoAccount={handleUseDemoAccount} />
 
       <AnimatePresence initial={false}>
         {globalError && (
