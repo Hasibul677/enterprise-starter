@@ -35,11 +35,26 @@ const envSchema = z.object({
   NEXT_PUBLIC_APP_NAME: z.string().default("Enterprise Starter"),
 
   // Optional "Demo Account" panel on /login (see demo-account-panel.tsx) -
-  // deliberately public (NEXT_PUBLIC_*, inlined into the client bundle) and
-  // deliberately optional. Point these at a dedicated, low-privilege
-  // (non-Super-Admin) review account only - never a real user's
-  // credentials. Leave BOTH unset to hide the panel entirely; the login
-  // page works identically either way.
+  // deliberately public and deliberately optional. Point these at a
+  // dedicated, low-privilege (non-Super-Admin) review account only - never
+  // a real user's credentials. Leave BOTH unset to hide the panel
+  // entirely; the login page works identically either way.
+  //
+  // Read server-side only (login/page.tsx) and passed down as a prop,
+  // rather than referenced as `process.env.NEXT_PUBLIC_*` inside a "use
+  // client" file - keeps the value out of the long-lived static client JS
+  // chunk, only in the per-request page render.
+  //
+  // LOCAL DEV GOTCHA (does not affect Vercel/production - see below): if
+  // NEXT_PUBLIC_DEMO_PASSWORD is set in a local .env file and contains a
+  // literal "$" followed by digits (e.g. "Example$77secret!"), `@next/env`'s
+  // dotenv-expand step treats it as a reference to another variable (here,
+  // one literally named "77") and silently drops it - confirmed
+  // "Example$77secret!" loads as "Example!". Escape a literal "$" as "\$" in
+  // .env files. This is purely a local .env-file-parsing behavior: .env is
+  // gitignored and never present in a Vercel build, where env vars are
+  // injected directly with no file-parsing/expansion step - confirmed by
+  // testing the same value with no .env entry at all, which loads correctly.
   NEXT_PUBLIC_DEMO_EMAIL: z.string().optional(),
   NEXT_PUBLIC_DEMO_PASSWORD: z.string().optional(),
 });

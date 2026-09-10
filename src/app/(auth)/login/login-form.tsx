@@ -24,7 +24,7 @@ import { DemoAccountPanel } from "./demo-account-panel";
 
 const fieldClassName = "h-10 rounded-xl bg-paper/50 transition-all duration-200 focus:bg-surface focus:ring-4";
 
-function LoginForm() {
+function LoginForm({ demoEmail, demoPassword }: { demoEmail?: string; demoPassword?: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const setSession = useAuthStore((s) => s.setSession);
@@ -77,7 +77,7 @@ function LoginForm() {
         <p className="mt-1 text-sm text-ink-soft">Enter your credentials to access your dashboard.</p>
       </div>
 
-      <DemoAccountPanel onUseDemoAccount={handleUseDemoAccount} />
+      <DemoAccountPanel email={demoEmail} password={demoPassword} onUseDemoAccount={handleUseDemoAccount} />
 
       <AnimatePresence initial={false}>
         {globalError && (

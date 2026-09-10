@@ -5,17 +5,6 @@ import { Copy, Check } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
 import { Button } from "@/components/ui/button";
 
-/**
- * NEXT_PUBLIC_* vars are inlined into the client bundle at build time, so
- * this panel is only ever pointed at a dedicated, low-privilege review
- * account (see .env.example) - never a real user's credentials, and never
- * Super Admin. Both must be set for the panel to render at all; either
- * missing/empty means this returns null and the rest of the login page is
- * unaffected (see login-form.tsx).
- */
-const DEMO_EMAIL = process.env.NEXT_PUBLIC_DEMO_EMAIL;
-const DEMO_PASSWORD = process.env.NEXT_PUBLIC_DEMO_PASSWORD;
-
 function CopyField({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -43,26 +32,39 @@ function CopyField({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * `email`/`password` are passed in from login/page.tsx (a Server Component
+ * that reads NEXT_PUBLIC_DEMO_EMAIL/PASSWORD server-side) rather than read
+ * here via `process.env.NEXT_PUBLIC_*` directly - see the comment on those
+ * vars in src/config/env.ts for why: Next's build-time inlining of that
+ * exact syntax in a "use client" file corrupts values containing "$"
+ * followed by digits. Both undefined/empty means this returns null and the
+ * rest of the login page is unaffected.
+ */
 export function DemoAccountPanel({
+  email,
+  password,
   onUseDemoAccount,
 }: {
+  email?: string;
+  password?: string;
   onUseDemoAccount: (email: string, password: string) => void;
 }) {
-  if (!DEMO_EMAIL || !DEMO_PASSWORD) return null;
+  if (!email || !password) return null;
 
   return (
     <div className="mb-4 rounded-xl border border-dashed border-accent/40 bg-accent-soft/40 p-3">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-accent">Demo account</p>
       <div className="flex flex-col gap-1.5">
-        <CopyField label="Email" value={DEMO_EMAIL} />
-        <CopyField label="Password" value={DEMO_PASSWORD} />
+        <CopyField label="Email" value={email} />
+        <CopyField label="Password" value={password} />
       </div>
       <Button
         type="button"
         variant="secondary"
         size="sm"
         className="mt-2 w-full"
-        onClick={() => onUseDemoAccount(DEMO_EMAIL, DEMO_PASSWORD)}
+        onClick={() => onUseDemoAccount(email, password)}
       >
         Use demo account
       </Button>
