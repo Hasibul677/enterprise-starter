@@ -13,11 +13,13 @@ import { getRateLimiter, rateLimitKeyFromRequest } from "@/lib/security/rate-lim
 
 /**
  * Requirement #21 - "Login as User", extended to Company Admin account-
- * access over its own Moderators. requireImpersonationActor() is the real,
- * DB-derived gate on WHO may start an impersonation at all (Super Admin or
- * Company Admin - never trust a client-side role check); per-target
- * eligibility (layer, ownership, active status) is independently enforced
- * inside impersonateUser(). Overwrites the CURRENT browser's auth cookies
+ * access over its own Moderators, and to a permission-gated Admin account-
+ * access over its own Customers. requireImpersonationActor() is the real,
+ * DB-derived gate on WHO may start an impersonation at all (Super Admin,
+ * Company Admin, or an Admin holding the `impersonation` permission - never
+ * trust a client-side role/permission check); per-target eligibility (layer,
+ * ownership, active status) is independently enforced inside
+ * impersonateUser(). Overwrites the CURRENT browser's auth cookies
  * with a real session/token pair for the target user, exactly like a normal
  * login (setAuthCookies() is the same helper the login route uses) - the
  * resulting session is server-authorized and enforced by the existing auth/

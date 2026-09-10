@@ -11,8 +11,25 @@ import {
 } from "@/lib/permissions/constants";
 import { cn } from "@/lib/utils/cn";
 
+export type PermissionMatrixResource = {
+  key: string;
+  label: string;
+  /**
+   * Actions that don't apply to THIS resource at all (e.g. `login_as` only
+   * applies to the "users" resource, and even then only when editing an
+   * ADMIN-layer role/user - see layer-mappings.ts resourceOptionsForLayer()).
+   * Rendered as a blank cell instead of a checkbox; excluded from every
+   * bulk-select ("All Permissions" / per-column) calculation. When NO
+   * resource in the table applies a given action at all, that action's
+   * entire column is omitted rather than showing an empty, unusable one -
+   * this is what actually keeps `login_as` off a Company Admin/Moderator
+   * role's matrix entirely, not just unchecked.
+   */
+  hiddenActions?: PermissionAction[];
+};
+
 export type PermissionMatrixProps = {
-  resources: { key: string; label: string }[];
+  resources: PermissionMatrixResource[];
   value: PermissionMap;
   onChange: (next: PermissionMap) => void;
   disabled?: boolean;
@@ -66,6 +83,12 @@ function triState(granted: number, total: number): TriState {
   return granted === total ? "checked" : "indeterminate";
 }
 
+/** Human-readable column/cell label - e.g. "login_as" -> "login as", which
+ * the header's `capitalize` CSS class then renders as "Login As". */
+function formatActionLabel(action: string): string {
+  return action.replace(/_/g, " ");
+}
+
 /**
  * The admin-facing permission matrix (requirement #70). The BACKEND
  * independently re-validates every permission on save (role-create /
@@ -90,26 +113,39 @@ export function PermissionMatrix({ resources, value, onChange, disabled, lockedV
     return Boolean(lockedPermsFor(resourceKey)[action]);
   }
 
+  /** Whether `action` is even a real capability of this specific resource - see PermissionMatrixResource.hiddenActions. */
+  function isApplicable(resourceKey: string, action: PermissionAction): boolean {
+    const hidden = resources.find((r) => r.key === resourceKey)?.hiddenActions;
+    return !hidden?.includes(action);
+  }
+
   /** Checked/unchecked as actually rendered - the locked baseline OR the editable override. */
   function effectiveFor(resourceKey: string, action: PermissionAction): boolean {
     return isLocked(resourceKey, action) || Boolean(permsFor(resourceKey)[action]);
   }
 
   function toggle(resourceKey: string, action: PermissionAction) {
-    if (disabled || isLocked(resourceKey, action)) return;
+    if (disabled || isLocked(resourceKey, action) || !isApplicable(resourceKey, action)) return;
     const current = permsFor(resourceKey);
     onChange({ ...value, [resourceKey]: { ...current, [action]: !current[action] } });
   }
 
+  // An action's whole column only renders when at least one resource in the
+  // table actually has it - this is what keeps `login_as` off the matrix
+  // entirely for a Company Admin/Moderator role rather than showing an
+  // empty, unusable column (see PermissionMatrixResource.hiddenActions doc).
+  const visibleActions = PERMISSION_ACTIONS.filter((action) => resources.some((r) => isApplicable(r.key, action)));
+
   function columnState(action: PermissionAction): TriState {
-    const granted = resources.filter((r) => effectiveFor(r.key, action)).length;
-    return triState(granted, resources.length);
+    const applicableResources = resources.filter((r) => isApplicable(r.key, action));
+    const granted = applicableResources.filter((r) => effectiveFor(r.key, action)).length;
+    return triState(granted, applicableResources.length);
   }
 
-  /** Whether a column/"All Permissions" checkbox has anything left to toggle - a column that's fully role-locked already shows checked and has nothing for a bulk action to change. */
+  /** Whether a column/"All Permissions" checkbox has anything left to toggle - a column that's fully role-locked (or not applicable to any resource) already shows checked/blank and has nothing for a bulk action to change. */
   function hasEditableCell(action?: PermissionAction): boolean {
-    const actions = action ? [action] : PERMISSION_ACTIONS;
-    return resources.some((r) => actions.some((a) => !isLocked(r.key, a)));
+    const actions = action ? [action] : visibleActions;
+    return resources.some((r) => actions.some((a) => isApplicable(r.key, a) && !isLocked(r.key, a)));
   }
 
   function toggleColumn(action: PermissionAction) {
@@ -117,7 +153,7 @@ export function PermissionMatrix({ resources, value, onChange, disabled, lockedV
     const nextValue = columnState(action) !== "checked";
     const next: PermissionMap = { ...value };
     for (const resource of resources) {
-      if (isLocked(resource.key, action)) continue;
+      if (isLocked(resource.key, action) || !isApplicable(resource.key, action)) continue;
       next[resource.key] = { ...permsFor(resource.key), [action]: nextValue };
     }
     onChange(next);
@@ -125,10 +161,15 @@ export function PermissionMatrix({ resources, value, onChange, disabled, lockedV
 
   function allPermissionsState(): TriState {
     let granted = 0;
+    let total = 0;
     for (const resource of resources) {
-      for (const action of PERMISSION_ACTIONS) if (effectiveFor(resource.key, action)) granted++;
+      for (const action of visibleActions) {
+        if (!isApplicable(resource.key, action)) continue;
+        total++;
+        if (effectiveFor(resource.key, action)) granted++;
+      }
     }
-    return triState(granted, resources.length * PERMISSION_ACTIONS.length);
+    return triState(granted, total);
   }
 
   function toggleAllPermissions() {
@@ -138,8 +179,8 @@ export function PermissionMatrix({ resources, value, onChange, disabled, lockedV
     for (const resource of resources) {
       const current = permsFor(resource.key);
       const updated = { ...current };
-      for (const action of PERMISSION_ACTIONS) {
-        if (!isLocked(resource.key, action)) updated[action] = nextValue;
+      for (const action of visibleActions) {
+        if (!isLocked(resource.key, action) && isApplicable(resource.key, action)) updated[action] = nextValue;
       }
       next[resource.key] = updated;
     }
@@ -166,16 +207,16 @@ export function PermissionMatrix({ resources, value, onChange, disabled, lockedV
         <thead>
           <tr className="border-b border-line text-ink-soft">
             <th className="px-4 py-2.5 font-medium">Resource</th>
-            {PERMISSION_ACTIONS.map((action) => (
+            {visibleActions.map((action) => (
               <th key={action} className="px-4 py-2.5 text-center font-medium capitalize">
                 <span className="inline-flex items-center gap-1.5">
                   <TriStateCheckbox
                     state={columnState(action)}
                     onToggle={() => toggleColumn(action)}
                     disabled={disabled || !hasEditableCell(action)}
-                    label={`Select ${action} for all resources`}
+                    label={`Select ${formatActionLabel(action)} for all resources`}
                   />
-                  {action}
+                  {formatActionLabel(action)}
                 </span>
               </th>
             ))}
@@ -185,7 +226,14 @@ export function PermissionMatrix({ resources, value, onChange, disabled, lockedV
           {resources.map((resource) => (
             <tr key={resource.key} className="border-b border-line last:border-0">
               <td className="px-4 py-2.5 font-medium text-ink">{resource.label}</td>
-              {PERMISSION_ACTIONS.map((action) => {
+              {visibleActions.map((action) => {
+                if (!isApplicable(resource.key, action)) {
+                  return (
+                    <td key={action} className="px-4 py-2.5 text-center text-ink-soft/40" aria-hidden="true">
+                      &mdash;
+                    </td>
+                  );
+                }
                 const locked = isLocked(resource.key, action);
                 const checked = effectiveFor(resource.key, action);
                 return (
@@ -196,7 +244,9 @@ export function PermissionMatrix({ resources, value, onChange, disabled, lockedV
                       onClick={() => toggle(resource.key, action)}
                       aria-pressed={checked}
                       aria-label={
-                        locked ? `${resource.label} - ${action} (granted by role)` : `${resource.label} - ${action}`
+                        locked
+                          ? `${resource.label} - ${formatActionLabel(action)} (granted by role)`
+                          : `${resource.label} - ${formatActionLabel(action)}`
                       }
                       title={locked ? "Granted by role - cannot be revoked here" : undefined}
                       className={cn(

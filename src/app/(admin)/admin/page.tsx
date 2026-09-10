@@ -3,27 +3,18 @@
 import { ContentContainer } from "@/components/layout/content-container";
 import { PageHeader } from "@/components/layout/page-header";
 import { useAuthStore } from "@/stores/auth-store";
+import { AdminDashboardView } from "@/components/dashboard/admin-dashboard-view";
 
 export default function AdminHomePage() {
   const user = useAuthStore((s) => s.user);
 
   return (
-    <ContentContainer>
+    <ContentContainer className="max-w-[1400px]">
       <PageHeader
         title={`Welcome${user ? `, ${user.firstName}` : ""}`}
-        description="Super Admin console - manage users, roles, and menus."
+        description="An overview of users, growth, and system activity within your access scope."
       />
-      <div className="grid gap-4 sm:grid-cols-3">
-        {[{ label: "Management", href: "/admin/management" }].map((card) => (
-          <a
-            key={card.href}
-            href={card.href}
-            className="rounded-lg border border-line bg-surface p-4 text-sm font-medium text-ink hover:border-accent"
-          >
-            {card.label}
-          </a>
-        ))}
-      </div>
+      <AdminDashboardView />
     </ContentContainer>
   );
 }

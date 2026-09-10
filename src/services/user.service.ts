@@ -78,7 +78,12 @@ function assertRolesAssignableByActor(roles: RoleDocument[], access: ResolvedAcc
   }
 }
 
-function buildUserListScopeFilter(access: ResolvedAccess): Record<string, unknown> {
+/**
+ * Exported so dashboard.service.ts can build its stats aggregation over the
+ * EXACT same RBAC scope /api/users already uses - never a re-derived copy
+ * that could silently drift out of sync with the real list-scoping rules.
+ */
+export function buildUserListScopeFilter(access: ResolvedAccess): Record<string, unknown> {
   if (access.isSuperAdmin) return {};
 
   const viewableLayers = VIEWABLE_TARGET_LAYERS_BY[access.userLayer] ?? [];

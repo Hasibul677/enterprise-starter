@@ -67,4 +67,39 @@ export const userRepository = {
   async updatePermissionOverrides(id: string, permissionOverrides: Record<string, Record<string, boolean>>) {
     return UserModel.findByIdAndUpdate(id, { permissionOverrides }, { new: true }).populate("roles").exec();
   },
+
+  /**
+   * One aggregation, scoped by the SAME `scopeFilter` shape `list()` already
+   * takes (see user.service.ts#buildUserListScopeFilter) - dashboard.service.ts
+   * shapes the raw facet buckets into typed stats. Raw here on purpose (no
+   * business rules, per repository convention) - which layers/months are
+   * actually meaningful for a given actor is decided in the service layer.
+   */
+  async aggregateStats(scopeFilter: Record<string, unknown>, monthsSince: Date) {
+    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const [result] = await UserModel.aggregate([
+      { $match: scopeFilter },
+      {
+        $facet: {
+          totalUsers: [{ $count: "count" }],
+          byLayer: [{ $group: { _id: "$userLayer", count: { $sum: 1 } } }],
+          byStatus: [{ $group: { _id: "$status", count: { $sum: 1 } } }],
+          newThisMonth: [{ $match: { createdAt: { $gte: startOfMonth } } }, { $count: "count" }],
+          monthly: [
+            { $match: { createdAt: { $gte: monthsSince } } },
+            { $group: { _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } }, count: { $sum: 1 } } },
+            { $sort: { _id: 1 } },
+          ],
+        },
+      },
+    ]).exec();
+
+    return {
+      totalUsers: (result?.totalUsers?.[0]?.count as number | undefined) ?? 0,
+      byLayer: (result?.byLayer ?? []) as { _id: string; count: number }[],
+      byStatus: (result?.byStatus ?? []) as { _id: string; count: number }[],
+      newThisMonth: (result?.newThisMonth?.[0]?.count as number | undefined) ?? 0,
+      monthly: (result?.monthly ?? []) as { _id: string; count: number }[],
+    };
+  },
 };

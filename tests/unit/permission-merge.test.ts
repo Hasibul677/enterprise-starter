@@ -4,30 +4,49 @@ import { mergeRolePermissions, hasPermission, hasAnyPermission, hasAllPermission
 describe("multi-role permission merge (requirement #11)", () => {
   it("merges two active roles using UNION/OR logic", () => {
     const merged = mergeRolePermissions([
-      { isActive: true, permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false } } },
-      { isActive: true, permissions: { users: { view: true, add: true, edit: true, delete: false, comment: false } } },
+      {
+        isActive: true,
+        permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false } },
+      },
+      {
+        isActive: true,
+        permissions: { users: { view: true, add: true, edit: true, delete: false, comment: false, login_as: false } },
+      },
     ]);
 
-    expect(merged.users).toEqual({ view: true, add: true, edit: true, delete: false, comment: false });
+    expect(merged.users).toEqual({ view: true, add: true, edit: true, delete: false, comment: false, login_as: false });
   });
 
   it("ignores permissions from inactive roles entirely", () => {
     const merged = mergeRolePermissions([
-      { isActive: true, permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false } } },
-      { isActive: false, permissions: { users: { view: true, add: true, edit: true, delete: true, comment: true } } },
+      {
+        isActive: true,
+        permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false } },
+      },
+      {
+        isActive: false,
+        permissions: { users: { view: true, add: true, edit: true, delete: true, comment: true, login_as: false } },
+      },
     ]);
 
-    expect(merged.users).toEqual({ view: true, add: false, edit: false, delete: false, comment: false });
+    expect(merged.users).toEqual({
+      view: true,
+      add: false,
+      edit: false,
+      delete: false,
+      comment: false,
+      login_as: false,
+    });
   });
 
   it("is order-independent (deterministic regardless of role array order)", () => {
     const roleA = {
       isActive: true,
-      permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false } },
+      permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false } },
     };
     const roleB = {
       isActive: true,
-      permissions: { users: { view: false, add: true, edit: false, delete: false, comment: false } },
+      permissions: { users: { view: false, add: true, edit: false, delete: false, comment: false, login_as: false } },
     };
 
     expect(mergeRolePermissions([roleA, roleB])).toEqual(mergeRolePermissions([roleB, roleA]));
@@ -35,8 +54,14 @@ describe("multi-role permission merge (requirement #11)", () => {
 
   it("merges permissions across multiple distinct resources independently", () => {
     const merged = mergeRolePermissions([
-      { isActive: true, permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false } } },
-      { isActive: true, permissions: { roles: { view: true, add: true, edit: false, delete: false, comment: false } } },
+      {
+        isActive: true,
+        permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false } },
+      },
+      {
+        isActive: true,
+        permissions: { roles: { view: true, add: true, edit: false, delete: false, comment: false, login_as: false } },
+      },
     ]);
 
     expect(hasPermission(merged, "users", "view")).toBe(true);
@@ -51,16 +76,34 @@ describe("multi-role permission merge (requirement #11)", () => {
 
   it("merges the comment permission using the same UNION/OR logic as the other actions", () => {
     const merged = mergeRolePermissions([
-      { isActive: true, permissions: { users: { view: false, add: false, edit: false, delete: false, comment: true } } },
-      { isActive: true, permissions: { users: { view: false, add: false, edit: false, delete: false, comment: false } } },
+      {
+        isActive: true,
+        permissions: { users: { view: false, add: false, edit: false, delete: false, comment: true, login_as: false } },
+      },
+      {
+        isActive: true,
+        permissions: {
+          users: { view: false, add: false, edit: false, delete: false, comment: false, login_as: false },
+        },
+      },
     ]);
 
     expect(hasPermission(merged, "users", "comment")).toBe(true);
   });
 
   it("unions a user's per-user permissionOverrides on top of their role permissions (requirement #9), the same way current-user.ts does", () => {
-    const rolePermissions = { isActive: true, permissions: { settings: { view: false, add: false, edit: false, delete: false, comment: false } } };
-    const userOverrides = { isActive: true, permissions: { settings: { view: true, add: false, edit: false, delete: false, comment: false } } };
+    const rolePermissions = {
+      isActive: true,
+      permissions: {
+        settings: { view: false, add: false, edit: false, delete: false, comment: false, login_as: false },
+      },
+    };
+    const userOverrides = {
+      isActive: true,
+      permissions: {
+        settings: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false },
+      },
+    };
 
     const merged = mergeRolePermissions([rolePermissions, userOverrides]);
 
@@ -70,20 +113,35 @@ describe("multi-role permission merge (requirement #11)", () => {
 
 describe("hasAnyPermission / hasAllPermissions (requirement #5 reusable permission-checking system)", () => {
   const permissions = {
-    users: { view: true, add: false, edit: false, delete: false, comment: false },
-    roles: { view: false, add: false, edit: false, delete: false, comment: false },
+    users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false },
+    roles: { view: false, add: false, edit: false, delete: false, comment: false, login_as: false },
   };
 
   it("hasAnyPermission is true if at least one check passes", () => {
-    expect(hasAnyPermission(permissions, [{ resource: "roles", action: "view" }, { resource: "users", action: "view" }])).toBe(true);
+    expect(
+      hasAnyPermission(permissions, [
+        { resource: "roles", action: "view" },
+        { resource: "users", action: "view" },
+      ])
+    ).toBe(true);
   });
 
   it("hasAnyPermission is false if none of the checks pass", () => {
-    expect(hasAnyPermission(permissions, [{ resource: "roles", action: "view" }, { resource: "roles", action: "edit" }])).toBe(false);
+    expect(
+      hasAnyPermission(permissions, [
+        { resource: "roles", action: "view" },
+        { resource: "roles", action: "edit" },
+      ])
+    ).toBe(false);
   });
 
   it("hasAllPermissions is true only if every check passes", () => {
     expect(hasAllPermissions(permissions, [{ resource: "users", action: "view" }])).toBe(true);
-    expect(hasAllPermissions(permissions, [{ resource: "users", action: "view" }, { resource: "roles", action: "view" }])).toBe(false);
+    expect(
+      hasAllPermissions(permissions, [
+        { resource: "users", action: "view" },
+        { resource: "roles", action: "view" },
+      ])
+    ).toBe(false);
   });
 });

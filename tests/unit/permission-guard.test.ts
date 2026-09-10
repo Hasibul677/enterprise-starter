@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { requirePermission, requireAnyPermission, requireAllPermissions, requireAdminAreaAccess, requireCompanyAdminAreaAccess } from "@/lib/permissions/guard";
+import {
+  requirePermission,
+  requireAnyPermission,
+  requireAllPermissions,
+  requireAdminAreaAccess,
+  requireCompanyAdminAreaAccess,
+  requireImpersonationActor,
+} from "@/lib/permissions/guard";
 import { AuthorizationError } from "@/lib/errors/app-error";
-import { USER_LAYERS } from "@/lib/permissions/constants";
+import { CORE_RESOURCES, USER_LAYERS } from "@/lib/permissions/constants";
 import type { ResolvedAccess } from "@/lib/auth/current-user";
 
 function access(overrides: Partial<ResolvedAccess>): ResolvedAccess {
@@ -20,12 +27,16 @@ function access(overrides: Partial<ResolvedAccess>): ResolvedAccess {
 
 describe("requirePermission (server-side authorization gate, requirement #13)", () => {
   it("allows an action when the merged permission map grants it", () => {
-    const acc = access({ permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false } } });
+    const acc = access({
+      permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false } },
+    });
     expect(() => requirePermission(acc, "users", "view")).not.toThrow();
   });
 
   it("throws AuthorizationError when the permission is not granted (users.view=true, users.add=false)", () => {
-    const acc = access({ permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false } } });
+    const acc = access({
+      permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false } },
+    });
     expect(() => requirePermission(acc, "users", "add")).toThrow(AuthorizationError);
   });
 
@@ -44,23 +55,32 @@ describe("requirePermission (server-side authorization gate, requirement #13)", 
     // reached this function, it would have had to come from resolveCurrentAccess()
     // (DB-derived), never from client input - there is no code path that lets a
     // route handler call requirePermission() with client-supplied permissions.
-    const acc = access({ permissions: { users: { view: true, add: true, edit: true, delete: true, comment: true } } });
+    const acc = access({
+      permissions: { users: { view: true, add: true, edit: true, delete: true, comment: true, login_as: false } },
+    });
     expect(() => requirePermission(acc, "users", "delete")).not.toThrow();
     expect(() => requirePermission(acc, "roles", "delete")).toThrow(AuthorizationError);
   });
 
   it("gates the comment permission the same way as the other actions", () => {
-    const acc = access({ permissions: { users: { view: false, add: false, edit: false, delete: false, comment: true } } });
+    const acc = access({
+      permissions: { users: { view: false, add: false, edit: false, delete: false, comment: true, login_as: false } },
+    });
     expect(() => requirePermission(acc, "users", "comment")).not.toThrow();
     expect(() => requirePermission(acc, "users", "delete")).toThrow(AuthorizationError);
   });
 });
 
 describe("requireAnyPermission / requireAllPermissions (requirement #5)", () => {
-  const checks = [{ resource: "users", action: "view" as const }, { resource: "roles", action: "view" as const }];
+  const checks = [
+    { resource: "users", action: "view" as const },
+    { resource: "roles", action: "view" as const },
+  ];
 
   it("requireAnyPermission passes with only one of the checks granted", () => {
-    const acc = access({ permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false } } });
+    const acc = access({
+      permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false } },
+    });
     expect(() => requireAnyPermission(acc, checks)).not.toThrow();
   });
 
@@ -70,13 +90,15 @@ describe("requireAnyPermission / requireAllPermissions (requirement #5)", () => 
   });
 
   it("requireAllPermissions throws unless every check is granted", () => {
-    const acc = access({ permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false } } });
+    const acc = access({
+      permissions: { users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false } },
+    });
     expect(() => requireAllPermissions(acc, checks)).toThrow(AuthorizationError);
 
     const accBoth = access({
       permissions: {
-        users: { view: true, add: false, edit: false, delete: false, comment: false },
-        roles: { view: true, add: false, edit: false, delete: false, comment: false },
+        users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false },
+        roles: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false },
       },
     });
     expect(() => requireAllPermissions(accBoth, checks)).not.toThrow();
@@ -115,5 +137,61 @@ describe("requireAdminAreaAccess / requireCompanyAdminAreaAccess (requirement #3
     const acc = access({ userLayer: USER_LAYERS.CUSTOMER });
     expect(() => requireAdminAreaAccess(acc)).toThrow(AuthorizationError);
     expect(() => requireCompanyAdminAreaAccess(acc)).toThrow(AuthorizationError);
+  });
+});
+
+describe("requireImpersonationActor (Super Admin / Company Admin unconditional, Admin permission-gated)", () => {
+  it("allows Super Admin unconditionally, even with an empty permission map", () => {
+    const acc = access({ isSuperAdmin: true, permissions: {} });
+    expect(() => requireImpersonationActor(acc)).not.toThrow();
+  });
+
+  it("allows Company Admin unconditionally, even with an empty permission map", () => {
+    const acc = access({ userLayer: USER_LAYERS.COMPANY_ADMIN, permissions: {} });
+    expect(() => requireImpersonationActor(acc)).not.toThrow();
+  });
+
+  it("blocks Admin without the `users.login_as` permission", () => {
+    const acc = access({ userLayer: USER_LAYERS.ADMIN, permissions: {} });
+    expect(() => requireImpersonationActor(acc)).toThrow(AuthorizationError);
+  });
+
+  it("blocks Admin even with unrelated users actions granted (view/add/edit/delete, but not login_as)", () => {
+    const acc = access({
+      userLayer: USER_LAYERS.ADMIN,
+      permissions: {
+        [CORE_RESOURCES.USERS]: { view: true, add: true, edit: true, delete: true, comment: true, login_as: false },
+      },
+    });
+    expect(() => requireImpersonationActor(acc)).toThrow(AuthorizationError);
+  });
+
+  it("allows Admin once explicitly granted `users.login_as` - 'Login as' is a capability of the Users resource, not a separate resource", () => {
+    const acc = access({
+      userLayer: USER_LAYERS.ADMIN,
+      permissions: {
+        [CORE_RESOURCES.USERS]: { view: false, add: false, edit: false, delete: false, comment: false, login_as: true },
+      },
+    });
+    expect(() => requireImpersonationActor(acc)).not.toThrow();
+  });
+
+  it("blocks Moderator and Customer regardless of any permission they hold - this feature is never extended to them", () => {
+    for (const userLayer of [USER_LAYERS.MODERATOR, USER_LAYERS.CUSTOMER]) {
+      const acc = access({
+        userLayer,
+        permissions: {
+          [CORE_RESOURCES.USERS]: {
+            view: false,
+            add: false,
+            edit: false,
+            delete: false,
+            comment: false,
+            login_as: true,
+          },
+        },
+      });
+      expect(() => requireImpersonationActor(acc)).toThrow(AuthorizationError);
+    }
   });
 });

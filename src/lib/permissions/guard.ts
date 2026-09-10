@@ -1,7 +1,7 @@
 import { AuthorizationError } from "@/lib/errors/app-error";
 import { hasPermission, hasAnyPermission, hasAllPermissions, type PermissionCheck } from "./merge";
 import { isAdminAreaLayer, isCompanyAdminAreaLayer } from "./role-hierarchy";
-import { USER_LAYERS } from "./constants";
+import { CORE_RESOURCES, USER_LAYERS } from "./constants";
 import type { ResolvedAccess } from "@/lib/auth/current-user";
 import type { PermissionAction } from "./constants";
 
@@ -73,12 +73,27 @@ export function requireCompanyAdminAreaAccess(access: ResolvedAccess) {
  * Gate for who may start an impersonation ("Login as user") session at all -
  * Super Admin (any applicable lower layer) or Company Admin (its own
  * Moderators only, per-target eligibility enforced separately by
- * getImpersonationIneligibleReason). Admin, Moderator, and Customer can
- * never impersonate anyone, regardless of any permission they hold.
+ * getImpersonationIneligibleReason) are unconditionally allowed. An ADMIN is
+ * allowed ONLY if its effective permissions explicitly grant `users.login_as`
+ * ("Login as" is a capability of the Users resource, not a separate
+ * "impersonation" resource - see PERMISSION_ACTIONS in constants.ts,
+ * granted via a Role's permission matrix or a per-user override - never on
+ * by default); per-target eligibility (CUSTOMER only) is still separately
+ * enforced by getImpersonationIneligibleReason via
+ * IMPERSONATION_TARGET_LAYERS_BY. Moderator and Customer can never
+ * impersonate anyone, regardless of any permission they hold - this feature
+ * is deliberately never extended to COMPANY_ADMIN/MODERATOR/CUSTOMER through
+ * this permission (resourceOptionsForLayer() also keeps `login_as` off
+ * their role-editing UI entirely).
  */
 export function requireImpersonationActor(access: ResolvedAccess) {
   if (access.isSuperAdmin || access.userLayer === USER_LAYERS.COMPANY_ADMIN) return;
-  throw new AuthorizationError("This action requires Super Admin or Company Admin access.");
+  if (access.userLayer === USER_LAYERS.ADMIN && hasPermission(access.permissions, CORE_RESOURCES.USERS, "login_as")) {
+    return;
+  }
+  throw new AuthorizationError(
+    "This action requires Super Admin or Company Admin access, or an explicit impersonation permission grant."
+  );
 }
 
 /**

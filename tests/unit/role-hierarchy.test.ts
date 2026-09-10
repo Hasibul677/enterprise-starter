@@ -17,7 +17,7 @@ import { CORE_RESOURCES, USER_LAYERS, type PermissionMap } from "@/lib/permissio
 const { SUPER_ADMIN, ADMIN, COMPANY_ADMIN, MODERATOR, CUSTOMER } = USER_LAYERS;
 
 const usersViewOnly: PermissionMap = {
-  [CORE_RESOURCES.USERS]: { view: true, add: false, edit: false, delete: false, comment: false },
+  [CORE_RESOURCES.USERS]: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false },
 };
 const noPermissions: PermissionMap = {};
 
@@ -355,8 +355,8 @@ describe("getVisibleUserManagementLayers (Users page tab visibility: hierarchy f
 });
 
 describe("canGrantPermissionOverride (requirement #9 - permission-assignment escalation guards)", () => {
-  const fullPerms = { view: true, add: true, edit: true, delete: true, comment: true };
-  const emptyPerms = { view: false, add: false, edit: false, delete: false, comment: false };
+  const fullPerms = { view: true, add: true, edit: true, delete: true, comment: true, login_as: false };
+  const emptyPerms = { view: false, add: false, edit: false, delete: false, comment: false, login_as: false };
 
   it("Super Admin can grant an Admin any resource regardless of its own permission map", () => {
     expect(
@@ -648,8 +648,8 @@ describe("getImpersonationIneligibleReason (requirement #21 - Super Admin 'Login
     ).toMatch(/active/);
   });
 
-  it("Admin, Moderator, and Customer can never impersonate anyone", () => {
-    for (const actorLayer of [ADMIN, MODERATOR, CUSTOMER]) {
+  it("Moderator and Customer can never impersonate anyone", () => {
+    for (const actorLayer of [MODERATOR, CUSTOMER]) {
       expect(
         getImpersonationIneligibleReason({
           actorUserId: "actor-1",
@@ -657,6 +657,34 @@ describe("getImpersonationIneligibleReason (requirement #21 - Super Admin 'Login
           isSuperAdmin: false,
           targetUserId: "target-1",
           targetUserLayer: CUSTOMER,
+          targetStatus: "ACTIVE",
+        })
+      ).toMatch(/not authorized/);
+    }
+  });
+
+  it("Admin's TARGET eligibility allows a Customer - actor-level authority (does it hold the `impersonation` permission) is a separate check made by requireImpersonationActor(), not this function", () => {
+    expect(
+      getImpersonationIneligibleReason({
+        actorUserId: "admin-1",
+        actorLayer: ADMIN,
+        isSuperAdmin: false,
+        targetUserId: "customer-1",
+        targetUserLayer: CUSTOMER,
+        targetStatus: "ACTIVE",
+      })
+    ).toBeNull();
+  });
+
+  it("Admin can never target Company Admin, Moderator, another Admin, or Super Admin", () => {
+    for (const targetUserLayer of [ADMIN, COMPANY_ADMIN, MODERATOR, SUPER_ADMIN]) {
+      expect(
+        getImpersonationIneligibleReason({
+          actorUserId: "admin-1",
+          actorLayer: ADMIN,
+          isSuperAdmin: false,
+          targetUserId: "target-1",
+          targetUserLayer,
           targetStatus: "ACTIVE",
         })
       ).toMatch(/not authorized/);

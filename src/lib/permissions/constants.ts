@@ -5,7 +5,20 @@
  * scattering permission strings across the codebase.
  */
 
-export const PERMISSION_ACTIONS = ["view", "add", "edit", "delete", "comment"] as const;
+/**
+ * `login_as` gates the "Login as User" (impersonation) capability - it only
+ * has real meaning on the USERS resource (see guard.ts
+ * requireImpersonationActor(), which checks `hasPermission(permissions,
+ * CORE_RESOURCES.USERS, "login_as")` for an ADMIN actor), exactly the same
+ * way `comment` only has real meaning on the COMMENTS resource - both are
+ * still defined globally here because every resource shares one
+ * ResourcePermissions shape (PermissionMatrix renders one column per action
+ * for every resource row); an inert `login_as`/`comment` checkbox on an
+ * unrelated resource is simply never consulted by anything. There is
+ * deliberately NO separate "impersonation" resource - impersonation is a
+ * capability OF Users, not its own menu/module.
+ */
+export const PERMISSION_ACTIONS = ["view", "add", "edit", "delete", "comment", "login_as"] as const;
 export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
 
 /**
@@ -88,6 +101,7 @@ export const EMPTY_RESOURCE_PERMISSIONS: ResourcePermissions = {
   edit: false,
   delete: false,
   comment: false,
+  login_as: false,
 };
 
 /**

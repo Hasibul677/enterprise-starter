@@ -184,13 +184,18 @@ export async function impersonateUser(params: {
 /**
  * Ends an impersonation session and restores the original actor's session
  * (requirement #21 "Return to Super Admin", extended to COMPANY_ADMIN ->
- * MODERATOR account-access) - no password re-entry: the original actor's
- * identity comes from the impersonation token's own signed `impersonatedBy`
- * claim, not from anything client-supplied, and is re-verified fresh
- * against the DB before being trusted. The original actor must still be
- * someone genuinely allowed to impersonate at all (Super Admin or Company
- * Admin) and active - if their own authority was revoked while they were
- * impersonating, returning is refused rather than silently restoring it.
+ * MODERATOR account-access and permission-gated ADMIN -> CUSTOMER account-
+ * access) - no password re-entry: the original actor's identity comes from
+ * the impersonation token's own signed `impersonatedBy` claim, not from
+ * anything client-supplied, and is re-verified fresh against the DB before
+ * being trusted. The original actor must still be an active user of a layer
+ * that's EVER allowed to impersonate (Super Admin, Company Admin, or Admin) -
+ * if their own authority was revoked while they were impersonating,
+ * returning is refused rather than silently restoring it. Their current
+ * `impersonation` permission is deliberately NOT re-checked here: returning
+ * only restores their OWN pre-existing session, never grants new access, the
+ * same way it already worked for Company Admin before this permission
+ * existed.
  */
 export async function endImpersonation(params: { access: ResolvedAccess }) {
   const { access } = params;
@@ -205,7 +210,9 @@ export async function endImpersonation(params: { access: ResolvedAccess }) {
   const canReturnToActor =
     originalActor &&
     originalActor.status === "ACTIVE" &&
-    (originalActorIsSuperAdmin || originalActorLayer === USER_LAYERS.COMPANY_ADMIN);
+    (originalActorIsSuperAdmin ||
+      originalActorLayer === USER_LAYERS.COMPANY_ADMIN ||
+      originalActorLayer === USER_LAYERS.ADMIN);
   if (!originalActor || !canReturnToActor) {
     throw new AuthenticationError(
       "The original account is no longer valid. Please log in again.",

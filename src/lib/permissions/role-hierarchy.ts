@@ -186,13 +186,26 @@ export const CREATABLE_ROLE_LAYERS_BY: Partial<Record<UserLayer, UserLayer[]>> =
  * CUSTOMER is deliberately absent from every entry here - a COMPANY_ADMIN
  * must never be able to impersonate a CUSTOMER, and omitting it from the
  * allow-list is what enforces that by default rather than needing a
- * separate deny-list.
+ * separate deny-list. ADMIN's entry additionally requires the actor to hold
+ * the `impersonation` permission (see requireImpersonationActor() in
+ * guard.ts) - unlike COMPANY_ADMIN, an ADMIN is never unconditionally
+ * allowed to impersonate; this table only says WHICH layer it may target
+ * once it does hold that permission (its own managed CUSTOMER accounts,
+ * same target set as its ordinary user-management authority).
  */
 export const IMPERSONATION_TARGET_LAYERS_BY: Partial<Record<UserLayer, UserLayer[]>> = {
+  [USER_LAYERS.ADMIN]: [USER_LAYERS.CUSTOMER],
   [USER_LAYERS.COMPANY_ADMIN]: [USER_LAYERS.MODERATOR],
 };
 
-/** Resource keys that belong to each menu/route scope (used for menu-visibility and grant validation). */
+/**
+ * Resource keys that belong to each menu/route scope (used for
+ * menu-visibility and grant validation). There is deliberately no separate
+ * "impersonation" resource here - "Login as User" is the `login_as` ACTION
+ * on the USERS resource (see PERMISSION_ACTIONS in constants.ts and
+ * resourceOptionsForLayer() in layer-mappings.ts, which hides that specific
+ * action's column outside an ADMIN-layer role/user).
+ */
 export const SCOPE_RESOURCES = {
   SUPER_ADMIN_ADMIN: [
     CORE_RESOURCES.USERS,
@@ -380,14 +393,16 @@ export function canManageRole(params: {
 
 /**
  * Requirement #21 (plus the additional Company Admin account-access
- * requirements): is `target` eligible to be impersonated by this actor?
+ * requirements, and the permission-gated ADMIN -> CUSTOMER "Login as User"
+ * capability): is `target` eligible to be impersonated by this actor?
  * Single source of truth for both the server (auth-service.ts - the real
  * enforcement) and the client-side row-action filter (UX only, never
  * trusted) - keeping them in sync automatically instead of two hand-written
  * copies of the same rules. Callers still independently verify the actor
  * itself is allowed to impersonate anyone at all (requireImpersonationActor()
- * at the route boundary, guard.ts); this only encodes TARGET eligibility for
- * a given actor, layer-hierarchy authority to impersonate that layer, and
+ * at the route boundary, guard.ts - for ADMIN this additionally requires the
+ * `impersonation` permission); this only encodes TARGET eligibility for a
+ * given actor, layer-hierarchy authority to impersonate that layer, and
  * (for COMPANY_ADMIN -> MODERATOR) ownership.
  */
 export function getImpersonationIneligibleReason(params: {

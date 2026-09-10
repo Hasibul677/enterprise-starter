@@ -27,7 +27,7 @@ async function main() {
   await mongoose.connect(env.MONGODB_URI);
   console.log("Connected to MongoDB for seeding.");
 
-  const fullPerms = { view: true, add: true, edit: true, delete: true, comment: true };
+  const fullPerms = { view: true, add: true, edit: true, delete: true, comment: true, login_as: true };
   const viewOnly = { view: true, add: false, edit: false, delete: false, comment: false };
   const empty = { view: false, add: false, edit: false, delete: false, comment: false };
 
@@ -58,6 +58,50 @@ async function main() {
     legacyNormalAdmin.name = "Company Admin";
     await legacyNormalAdmin.save({ validateBeforeSave: false });
     console.log("Migrated legacy 'normal-admin' role to 'company-admin'.");
+  }
+
+  // --- One-time migration: the standalone "impersonation" resource
+  // (`impersonation.view`) has been folded into a Users capability
+  // (`users.login_as` - see PERMISSION_ACTIONS in constants.ts) - "Login as
+  // User" is an action ON the Users resource, not its own resource/menu.
+  // Any role or per-user override that already granted the old resource
+  // keeps the same effective capability under its new name; the retired key
+  // is then dropped so it doesn't linger in the data forever.
+  type LegacyPermsMap = Map<string, { view?: boolean; login_as?: boolean } & Record<string, boolean | undefined>>;
+  const rolesWithLegacyImpersonation = await RoleModel.find({ "permissions.impersonation": { $exists: true } });
+  for (const role of rolesWithLegacyImpersonation) {
+    const permissions = role.permissions as unknown as LegacyPermsMap;
+    const impersonation = permissions.get("impersonation");
+    if (impersonation?.view) {
+      const users = permissions.get(CORE_RESOURCES.USERS) ?? {};
+      permissions.set(CORE_RESOURCES.USERS, { ...users, login_as: true });
+    }
+    permissions.delete("impersonation");
+    role.markModified("permissions");
+    await role.save({ validateBeforeSave: false });
+  }
+  if (rolesWithLegacyImpersonation.length > 0) {
+    console.log(
+      `Migrated ${rolesWithLegacyImpersonation.length} role(s) off the retired 'impersonation' resource to 'users.login_as'.`
+    );
+  }
+
+  const usersWithLegacyImpersonation = await UserModel.find({ "permissionOverrides.impersonation": { $exists: true } });
+  for (const user of usersWithLegacyImpersonation) {
+    const overrides = user.permissionOverrides as unknown as LegacyPermsMap;
+    const impersonation = overrides.get("impersonation");
+    if (impersonation?.view) {
+      const users = overrides.get(CORE_RESOURCES.USERS) ?? {};
+      overrides.set(CORE_RESOURCES.USERS, { ...users, login_as: true });
+    }
+    overrides.delete("impersonation");
+    user.markModified("permissionOverrides");
+    await user.save({ validateBeforeSave: false });
+  }
+  if (usersWithLegacyImpersonation.length > 0) {
+    console.log(
+      `Migrated ${usersWithLegacyImpersonation.length} user(s) off the retired 'impersonation' resource to 'users.login_as'.`
+    );
   }
 
   // --- The 5 seeded DEFAULT roles, one per fixed user layer (see

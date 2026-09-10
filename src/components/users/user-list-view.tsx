@@ -18,6 +18,7 @@ import { UserPermissionsDialog } from "@/components/users/user-permissions-dialo
 import { UserMenuAccessDialog } from "@/components/users/user-menu-access-dialog";
 import { apiClient, ApiClientError } from "@/lib/api-client/api-client";
 import { useAuthStore } from "@/stores/auth-store";
+import { usePermission } from "@/lib/permissions/use-permission";
 import {
   CREATABLE_LAYERS_BY,
   GRANTABLE_RESOURCES_BY,
@@ -25,7 +26,7 @@ import {
   canManageLayer,
   getImpersonationIneligibleReason,
 } from "@/lib/permissions/role-hierarchy";
-import { USER_LAYERS, type UserLayer } from "@/lib/permissions/constants";
+import { CORE_RESOURCES, USER_LAYERS, type UserLayer } from "@/lib/permissions/constants";
 import type { PaginationMeta } from "@/lib/api/response";
 import { formatDate } from "@/lib/date/dayjs";
 
@@ -83,6 +84,11 @@ export function UserListView({
   const isSuperAdmin = useAuthStore((s) => s.isSuperAdmin);
   const currentUserLayer = useAuthStore((s) => s.userLayer);
   const currentUserId = useAuthStore((s) => s.user?._id);
+  // "Login as" is a capability of the Users resource, not a separate
+  // resource - only meaningful for an ADMIN actor (Super Admin/Company Admin
+  // are unconditionally allowed regardless of this) - see
+  // requireImpersonationActor() in guard.ts for the real server-side gate.
+  const canImpersonateAsAdmin = usePermission(CORE_RESOURCES.USERS, "login_as");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [viewTarget, setViewTarget] = useState<UserRow | null>(null);
@@ -244,13 +250,21 @@ export function UserListView({
                 />
               </PermissionGuard>
             )}
-            {/* Super Admin or Company Admin only, plus the same eligibility rules
+            {/* Super Admin or Company Admin (unconditional), or an Admin explicitly
+                granted the Users -> `login_as` permission (via a Role or a
+                per-user override - never on by default; "Login as" is a
+                capability of the Users resource, not a separate resource),
+                plus the same eligibility rules
                 the server enforces (role-hierarchy.ts getImpersonationIneligibleReason -
                 never for self, an unauthorized layer/ownership pairing, or a
-                non-active account). This is UX filtering only: POST
-                /api/auth/impersonate independently re-validates every one of
-                these conditions server-side. */}
-            {(isSuperAdmin || currentUserLayer === USER_LAYERS.COMPANY_ADMIN) &&
+                non-active account; for Admin this also means CUSTOMER targets
+                only, never Company Admin/Moderator/another Admin). This is UX
+                filtering only: POST /api/auth/impersonate independently
+                re-validates every one of these conditions server-side
+                (requireImpersonationActor() + getImpersonationIneligibleReason()). */}
+            {(isSuperAdmin ||
+              currentUserLayer === USER_LAYERS.COMPANY_ADMIN ||
+              (currentUserLayer === USER_LAYERS.ADMIN && canImpersonateAsAdmin)) &&
               currentUserId &&
               !getImpersonationIneligibleReason({
                 actorUserId: currentUserId,

@@ -34,7 +34,8 @@ function ImpersonationBanner() {
       const { redirectTo } = await apiClient.post<{ redirectTo: string }>("/api/auth/impersonate/end");
       // Hard navigation, not router.push: guarantees a fully clean reload of
       // every client-side auth/menu/permission cache for the restored
-      // Super Admin session, with nothing left over from the impersonated one.
+      // original session (Super Admin, Company Admin, or a permission-
+      // granted Admin), with nothing left over from the impersonated one.
       window.location.href = redirectTo;
     } catch {
       setEnding(false);
@@ -49,7 +50,7 @@ function ImpersonationBanner() {
         {roleSlugs.length > 0 && <span className="font-normal">· Role: {roleSlugs.map(roleLabel).join(", ")}</span>}
       </span>
       <Button size="sm" variant="secondary" onClick={handleReturn} loading={ending}>
-        Return to Super Admin
+        Return to your account
       </Button>
     </div>
   );
@@ -113,7 +114,9 @@ export function AuthenticatedShell({ children }: { children: ReactNode }) {
       {isImpersonating && <ImpersonationBanner />}
       {warning && (
         <div className="border-b border-warning/30 bg-warning-soft px-6 py-2">
-          <Alert variant="warning">Your account has a warning flag. Contact an administrator if you believe this is in error.</Alert>
+          <Alert variant="warning">
+            Your account has a warning flag. Contact an administrator if you believe this is in error.
+          </Alert>
         </div>
       )}
       {children}

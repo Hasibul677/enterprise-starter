@@ -36,7 +36,7 @@ describe("effective menu tree (requirement #15)", () => {
     const all = [menu({ _id: "1", name: "Users", route: "/users", resourceKey: "users", level: 1 })];
     const tree = buildEffectiveMenuTree(
       all,
-      { users: { view: true, add: false, edit: false, delete: false, comment: false } },
+      { users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false } },
       false
     );
     expect(tree).toHaveLength(1);
@@ -50,7 +50,7 @@ describe("effective menu tree (requirement #15)", () => {
     ];
     const tree = buildEffectiveMenuTree(
       all,
-      { users: { view: true, add: false, edit: false, delete: false, comment: false } },
+      { users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false } },
       false
     );
     expect(tree).toHaveLength(1);
@@ -71,7 +71,7 @@ describe("effective menu tree (requirement #15)", () => {
     const all = [menu({ _id: "1", name: "Users", route: "/users", resourceKey: "users", isActive: false })];
     const tree = buildEffectiveMenuTree(
       all,
-      { users: { view: true, add: false, edit: false, delete: false, comment: false } },
+      { users: { view: true, add: false, edit: false, delete: false, comment: false, login_as: false } },
       false
     );
     expect(tree).toHaveLength(0);
@@ -91,7 +91,7 @@ describe("effective menu tree (requirement #15)", () => {
     ];
     const tree = buildEffectiveMenuTree(
       all,
-      { users: { view: true, add: true, edit: true, delete: true, comment: true } },
+      { users: { view: true, add: true, edit: true, delete: true, comment: true, login_as: false } },
       false,
       USER_LAYERS.ADMIN
     );
@@ -114,7 +114,7 @@ describe("effective menu tree (requirement #15)", () => {
   });
 
   describe("menu scope (requirement #7)", () => {
-    const fullPerms = { view: true, add: true, edit: true, delete: true, comment: true };
+    const fullPerms = { view: true, add: true, edit: true, delete: true, comment: true, login_as: false };
     const superAdminMenu = menu({
       _id: "1",
       name: "Roles",
