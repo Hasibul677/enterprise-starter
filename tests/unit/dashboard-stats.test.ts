@@ -9,8 +9,12 @@ import { USER_LAYERS } from "@/lib/permissions/constants";
 
 const { SUPER_ADMIN, ADMIN, COMPANY_ADMIN, MODERATOR, CUSTOMER } = USER_LAYERS;
 
-function userRef(id: string, userLayer: (typeof USER_LAYERS)[keyof typeof USER_LAYERS]) {
-  return { _id: id, firstName: "First", lastName: "Last", email: `${id}@example.com`, userLayer };
+function userRef(
+  id: string,
+  userLayer: (typeof USER_LAYERS)[keyof typeof USER_LAYERS],
+  managedBy?: string | null
+) {
+  return { _id: id, firstName: "First", lastName: "Last", email: `${id}@example.com`, userLayer, managedBy };
 }
 
 describe("buildMonthlySeries (zero-fills gaps for the monthly registrations chart)", () => {
@@ -148,5 +152,54 @@ describe("isAuditLogVisibleToActor (Recent Activity/Alerts can never expose an u
 
   it("an Admin never sees a system-actor entry (no actor/target at all) - safe default, not guessed at", () => {
     expect(isAuditLogVisibleToActor({ actorUserId: null, targetUserId: null }, adminAccess)).toBe(false);
+  });
+});
+
+describe("isAuditLogVisibleToActor - Company Admin ownership scoping (cross-company audit-log hardening)", () => {
+  const companyAAccess = { isSuperAdmin: false, userLayer: COMPANY_ADMIN, userId: "ca-A" };
+
+  it("Company Admin sees an entry about its OWN moderator (actor or target)", () => {
+    expect(
+      isAuditLogVisibleToActor(
+        { actorUserId: userRef("mod-of-A", MODERATOR, "ca-A"), targetUserId: null },
+        companyAAccess
+      )
+    ).toBe(true);
+    expect(
+      isAuditLogVisibleToActor(
+        { actorUserId: userRef("ca-A", COMPANY_ADMIN), targetUserId: userRef("mod-of-A", MODERATOR, "ca-A") },
+        companyAAccess
+      )
+    ).toBe(true);
+  });
+
+  it("Company Admin never sees an entry about ANOTHER company's moderator, even though the layer matches (the cross-company leak this hardens)", () => {
+    expect(
+      isAuditLogVisibleToActor(
+        { actorUserId: userRef("mod-of-B", MODERATOR, "ca-B"), targetUserId: null },
+        companyAAccess
+      )
+    ).toBe(false);
+    expect(
+      isAuditLogVisibleToActor(
+        { actorUserId: userRef("ca-B", COMPANY_ADMIN), targetUserId: userRef("mod-of-B", MODERATOR, "ca-B") },
+        companyAAccess
+      )
+    ).toBe(false);
+  });
+
+  it("Company Admin still sees Customer-layer entries with no ownership restriction (global visibility, requirement #5)", () => {
+    expect(
+      isAuditLogVisibleToActor({ actorUserId: userRef("cust-1", CUSTOMER), targetUserId: null }, companyAAccess)
+    ).toBe(true);
+  });
+
+  it("Company Admin never sees an entry about a peer Company Admin or anything above it", () => {
+    expect(
+      isAuditLogVisibleToActor({ actorUserId: userRef("ca-B", COMPANY_ADMIN), targetUserId: null }, companyAAccess)
+    ).toBe(false);
+    expect(
+      isAuditLogVisibleToActor({ actorUserId: userRef("admin-1", ADMIN), targetUserId: null }, companyAAccess)
+    ).toBe(false);
   });
 });

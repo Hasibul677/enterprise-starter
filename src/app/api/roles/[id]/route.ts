@@ -4,11 +4,9 @@ import { resolveCurrentAccess } from "@/lib/auth/current-user";
 import { requirePermission, requireAnyAdminAreaAccess } from "@/lib/permissions/guard";
 import { CORE_RESOURCES } from "@/lib/permissions/constants";
 import { roleUpdateSchema } from "@/features/roles/schemas/role-update.schema";
-import { updateRole, deactivateRole } from "@/services/role.service";
-import { roleRepository } from "@/repositories/role.repository";
+import { updateRole, deactivateRole, getRoleForViewer } from "@/services/role.service";
 import { ok, handleRouteError } from "@/lib/api/response";
 import { parseObjectId } from "@/lib/validation/object-id";
-import { NotFoundError } from "@/lib/errors/app-error";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -21,8 +19,10 @@ export async function GET(_request: NextRequest, { params }: Params) {
 
     const { id: rawId } = await params;
     const id = parseObjectId(rawId);
-    const role = await roleRepository.findById(id);
-    if (!role) throw new NotFoundError("Role not found.");
+    // getRoleForViewer() enforces canViewRole() - same ownership scope as
+    // listRolesForActor(), so a COMPANY_ADMIN can't fetch another company's
+    // role by guessing/manipulating its id.
+    const role = await getRoleForViewer(id, access);
 
     return ok({ role });
   } catch (err) {

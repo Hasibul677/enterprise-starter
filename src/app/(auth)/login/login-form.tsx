@@ -18,7 +18,7 @@ import { IconField } from "@/components/auth/icon-field";
 import { applyServerErrors } from "@/components/forms/set-server-errors";
 import { apiClient, ApiClientError } from "@/lib/api-client/api-client";
 import { useAuthStore } from "@/stores/auth-store";
-import { getDefaultLandingRoute } from "@/lib/permissions/role-hierarchy";
+import { resolvePostLoginRedirect } from "@/lib/permissions/role-hierarchy";
 import type { UserLayer } from "@/lib/permissions/constants";
 
 const fieldClassName = "h-10 rounded-xl bg-paper/50 transition-all duration-200 focus:bg-surface focus:ring-4";
@@ -48,7 +48,7 @@ function LoginForm() {
         warning: boolean;
       }>("/api/auth/me");
       setSession(me as never);
-      router.push(searchParams.get("redirectTo") || getDefaultLandingRoute(me));
+      router.push(resolvePostLoginRedirect(searchParams.get("redirectTo"), me));
     } catch (err) {
       if (err instanceof ApiClientError) {
         applyServerErrors(form.setError, err.errors);

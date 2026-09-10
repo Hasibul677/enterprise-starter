@@ -57,28 +57,35 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "hidden shrink-0 border-r border-line bg-surface p-3 transition-[width] duration-200 md:flex md:flex-col",
+        "sticky top-0 hidden h-screen shrink-0 border-r border-line bg-surface p-3 transition-[width] duration-200 md:flex md:flex-col",
         collapsed ? "w-16" : "w-64"
       )}
     >
-      <div className="mb-6 flex items-center justify-between gap-2 px-1">
-        {!collapsed && (
-          <span className="flex items-center gap-2 truncate text-sm font-semibold tracking-tight text-ink">
-            <FiZap aria-hidden="true" size={16} className="shrink-0 text-accent" />
-            <span className="truncate">Enterprise Starter</span>
-          </span>
-        )}
-        <IconButton
-          label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          onClick={toggleCollapsed}
-          className={collapsed ? "mx-auto" : "ml-auto"}
-        >
-          {collapsed ? (
+      <div className={cn("mb-6 flex items-center gap-3 px-1", collapsed ? "justify-center" : "justify-between")}>
+        {collapsed ? (
+          // Collapsed: one badge at top doubles as the expand toggle - shows
+          // the chevron directly (not the logo) so it reads as clickable at
+          // a glance, no hover needed to discover it.
+          <IconButton
+            label="Expand sidebar"
+            onClick={toggleCollapsed}
+            className="bg-accent text-white hover:bg-accent hover:text-white"
+          >
             <FiChevronsRight aria-hidden="true" size={16} />
-          ) : (
-            <FiChevronsLeft aria-hidden="true" size={16} />
-          )}
-        </IconButton>
+          </IconButton>
+        ) : (
+          <>
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent text-white">
+                <FiZap aria-hidden="true" size={16} />
+              </span>
+              <span className="truncate text-sm font-semibold tracking-tight text-ink">Enterprise Starter</span>
+            </span>
+            <IconButton label="Collapse sidebar" onClick={toggleCollapsed}>
+              <FiChevronsLeft aria-hidden="true" size={16} />
+            </IconButton>
+          </>
+        )}
       </div>
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-visible">
         <SidebarMenuList nodes={sectionedMenus} depth={0} collapsed={collapsed} />

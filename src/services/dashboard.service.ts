@@ -1,7 +1,7 @@
 import { userRepository } from "@/repositories/user.repository";
 import { auditLogRepository } from "@/repositories/audit-log.repository";
 import { buildUserListScopeFilter } from "@/services/user.service";
-import { VIEWABLE_TARGET_LAYERS_BY } from "@/lib/permissions/role-hierarchy";
+import { VIEWABLE_TARGET_LAYERS_BY, canViewTargetUser } from "@/lib/permissions/role-hierarchy";
 import { USER_LAYER_VALUES, type UserLayer } from "@/lib/permissions/constants";
 import { humanizeAction } from "@/lib/dashboard/format";
 import type { ResolvedAccess } from "@/lib/auth/current-user";
@@ -89,6 +89,7 @@ type PopulatedUserRef = {
   lastName: string;
   email: string;
   userLayer: UserLayer;
+  managedBy?: unknown;
 } | null;
 
 type RawAuditLogEntry = {
@@ -155,12 +156,17 @@ export function classifyAlertSeverity(action: string): AlertSeverity | null {
 /**
  * Whether a non-super-admin actor may see this audit log entry: its own
  * actions are always visible; otherwise only entries whose ACTOR or TARGET
- * resolves to a layer inside VIEWABLE_TARGET_LAYERS_BY (the same fixed
- * hierarchy /api/users and the stats endpoint already enforce). An entry
- * with neither an in-scope actor/target (e.g. a Role/Menu change made by a
- * layer the actor can't see) is excluded rather than guessed at - the safe
- * default per "never expose unauthorized users/data through the dashboard".
- * Pure - see tests/unit/dashboard-stats.test.ts.
+ * resolves to a user the actor could otherwise VIEW at all, per
+ * canViewTargetUser() - the same helper /api/users and the user detail route
+ * already enforce. This is deliberately the full ownership-aware check, not
+ * just a layer check: for a COMPANY_ADMIN, canViewTargetUser() additionally
+ * requires the referenced MODERATOR's managedBy to match the actor, so one
+ * company's audit trail can never surface a peer company's moderator
+ * activity - only a layer match (e.g. "any MODERATOR") is not enough. An
+ * entry with neither an in-scope actor/target (e.g. a Role/Menu change made
+ * by a layer the actor can't see) is excluded rather than guessed at - the
+ * safe default per "never expose unauthorized users/data through the
+ * dashboard". Pure - see tests/unit/dashboard-stats.test.ts.
  */
 export function isAuditLogVisibleToActor(
   entry: { actorUserId: PopulatedUserRef; targetUserId: PopulatedUserRef },
@@ -168,10 +174,20 @@ export function isAuditLogVisibleToActor(
 ): boolean {
   if (access.isSuperAdmin) return true;
   if (entry.actorUserId && String(entry.actorUserId._id) === access.userId) return true;
-  const visible = new Set(visibleStatsLayers(access));
-  if (entry.actorUserId && visible.has(entry.actorUserId.userLayer)) return true;
-  if (entry.targetUserId && visible.has(entry.targetUserId.userLayer)) return true;
-  return false;
+
+  function refVisible(ref: PopulatedUserRef): boolean {
+    if (!ref) return false;
+    return canViewTargetUser({
+      actorUserId: access.userId,
+      actorLayer: access.userLayer,
+      isSuperAdmin: access.isSuperAdmin,
+      targetUserId: String(ref._id),
+      targetLayer: ref.userLayer,
+      targetManagedBy: ref.managedBy ? String(ref.managedBy) : null,
+    });
+  }
+
+  return refVisible(entry.actorUserId) || refVisible(entry.targetUserId);
 }
 
 function refName(ref: PopulatedUserRef): { name: string; email: string } | null {

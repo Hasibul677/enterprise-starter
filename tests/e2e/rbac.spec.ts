@@ -118,6 +118,68 @@ test.describe("Company Admin (COMPANY_ADMIN layer)", () => {
   });
 });
 
+test.describe("Cross-company role isolation (requirement #10 - GET /api/roles/[id] ownership)", () => {
+  test("a Company Admin cannot fetch another company's role by id, can fetch its own, and Super Admin can fetch either", async () => {
+    // Company A is the seeded demo account. Company B is created fresh here
+    // (via the Super Admin API session) so this check doesn't depend on a
+    // second seeded account and cleans up nothing but its own test data.
+    const companyAApi = await request.newContext({ baseURL: "http://localhost:3000" });
+    await loginAs(companyAApi, "companyadmin@example.com", DEMO_PASSWORD);
+
+    const rolesResponse = await superAdminApi.get("/api/roles");
+    const roles = (await rolesResponse.json()).data as { slug: string; _id: string }[];
+    const companyAdminRoleId = roles.find((r) => r.slug === "company-admin")?._id;
+    expect(companyAdminRoleId).toBeTruthy();
+
+    const companyBEmail = `e2e-company-b-${Date.now()}@example.com`;
+    const createCompanyB = await superAdminApi.post("/api/users", {
+      data: {
+        firstName: "Company",
+        lastName: "B-Admin",
+        email: companyBEmail,
+        password: "GoodPass1",
+        roleIds: [companyAdminRoleId],
+        status: "ACTIVE",
+      },
+    });
+    expect(createCompanyB.ok()).toBeTruthy();
+
+    const companyBApi = await request.newContext({ baseURL: "http://localhost:3000" });
+    await loginAs(companyBApi, companyBEmail, "GoodPass1");
+
+    try {
+      const ownRole = await companyBApi.post("/api/roles", {
+        data: {
+          name: "E2E Company B Recruiter",
+          slug: `e2e-company-b-recruiter-${Date.now()}`,
+          userLayer: "MODERATOR",
+          permissions: {},
+        },
+      });
+      expect(ownRole.ok()).toBeTruthy();
+      const companyBRoleId = (await ownRole.json()).data.role._id as string;
+
+      await test.step("Company A cannot GET Company B's role by direct id (IDOR check)", async () => {
+        const response = await companyAApi.get(`/api/roles/${companyBRoleId}`);
+        expect(response.status()).toBe(403);
+      });
+
+      await test.step("Company B can still GET its own role", async () => {
+        const response = await companyBApi.get(`/api/roles/${companyBRoleId}`);
+        expect(response.ok()).toBeTruthy();
+      });
+
+      await test.step("Super Admin can GET any company's role", async () => {
+        const response = await superAdminApi.get(`/api/roles/${companyBRoleId}`);
+        expect(response.ok()).toBeTruthy();
+      });
+    } finally {
+      await companyAApi.dispose();
+      await companyBApi.dispose();
+    }
+  });
+});
+
 test.describe("Admin (ADMIN layer)", () => {
   test("can reach /admin but not /company-admin", async ({ page }) => {
     await loginAs(page.request, "demo-admin@example.com", DEMO_PASSWORD);

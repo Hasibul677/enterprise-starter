@@ -181,7 +181,7 @@ function SidebarMenuItem({
   }
 
   const content = (
-    <span className="flex flex-1 items-center gap-2.5 truncate">
+    <span className={cn("flex items-center gap-2.5 truncate", !isCollapsedRoot && "flex-1")}>
       <MenuIcon depth={depth} />
       {!isCollapsedRoot && (
         <span className="flex flex-1 items-center justify-between gap-2 truncate">

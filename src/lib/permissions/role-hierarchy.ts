@@ -392,6 +392,29 @@ export function canManageRole(params: {
 }
 
 /**
+ * Read-only counterpart to canManageRole() - same scope as
+ * listRolesForActor()/roleRepository.listForModeratorLayerOwner(): SUPER_ADMIN
+ * sees any role; a COMPANY_ADMIN may view a MODERATOR-layer role only if it's
+ * the shared default (managedBy: null) or one it owns itself - never a peer
+ * COMPANY_ADMIN's role. Every other actor layer (e.g. ADMIN's existing
+ * read-only Roles overview) is unrestricted, matching today's roleRepository.list().
+ * Used ONLY to gate reads (role detail GET) - never for edit/deactivate
+ * authority, which must keep calling canManageRole().
+ */
+export function canViewRole(params: {
+  isSuperAdmin: boolean;
+  actorUserId: string;
+  actorLayer: UserLayer;
+  role: { userLayer: UserLayer; managedBy?: string | null };
+}): boolean {
+  const { isSuperAdmin, actorUserId, actorLayer, role } = params;
+  if (isSuperAdmin) return true;
+  if (actorLayer !== USER_LAYERS.COMPANY_ADMIN) return true;
+  if (role.userLayer !== USER_LAYERS.MODERATOR) return false;
+  return role.managedBy === null || role.managedBy === actorUserId;
+}
+
+/**
  * Requirement #21 (plus the additional Company Admin account-access
  * requirements, and the permission-gated ADMIN -> CUSTOMER "Login as User"
  * capability): is `target` eligible to be impersonated by this actor?
@@ -442,4 +465,38 @@ export function getDefaultLandingRoute(access: { isSuperAdmin: boolean; userLaye
   if (access.isSuperAdmin || isAdminAreaLayer(access.userLayer)) return "/admin";
   if (isCompanyAdminAreaLayer(access.userLayer)) return "/company-admin";
   return "/dashboard";
+}
+
+/**
+ * Resolves where to send a user right after login, honoring a `?redirectTo`
+ * (set by proxy.ts when it bounced an unauthenticated request to /login) ONLY
+ * when that target is still inside THIS user's own dashboard tree.
+ *
+ * Without this guard, login-form.tsx pushing `redirectTo ?? getDefaultLandingRoute(access)`
+ * lets a stale/forged `redirectTo` silently override the layer-derived
+ * landing route: a Super Admin is authorized to view /company-admin/** (see
+ * proxy.ts), so a link like `/login?redirectTo=/company-admin` never gets
+ * caught by the route guard - it lands them on the Company Admin tree
+ * instead of their own /admin home. Every other layer would at least get
+ * bounced back out by proxy.ts's area check, but still not land where
+ * `getDefaultLandingRoute()` says they should.
+ *
+ * `getDefaultLandingRoute()` alone is still the single source of truth for
+ * "this layer's home tree" - this only adds the same-tree containment check
+ * on top, plus basic open-redirect hardening (must be a same-origin path).
+ */
+export function resolvePostLoginRedirect(
+  requestedRedirectTo: string | null | undefined,
+  access: { isSuperAdmin: boolean; userLayer: UserLayer }
+): string {
+  const defaultRoute = getDefaultLandingRoute(access);
+  if (
+    requestedRedirectTo &&
+    requestedRedirectTo.startsWith("/") &&
+    !requestedRedirectTo.startsWith("//") &&
+    (requestedRedirectTo === defaultRoute || requestedRedirectTo.startsWith(`${defaultRoute}/`))
+  ) {
+    return requestedRedirectTo;
+  }
+  return defaultRoute;
 }

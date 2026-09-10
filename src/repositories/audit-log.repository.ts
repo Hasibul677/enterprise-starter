@@ -1,6 +1,9 @@
 import { AuditLogModel } from "@/models/audit-log.model";
 
-const ACTOR_TARGET_SELECT = "firstName lastName email userLayer";
+// managedBy is included so dashboard.service.ts#isAuditLogVisibleToActor can
+// apply the same COMPANY_ADMIN -> MODERATOR ownership check the rest of the
+// app uses (canViewTargetUser()), not just a layer check.
+const ACTOR_TARGET_SELECT = "firstName lastName email userLayer managedBy";
 
 export const auditLogRepository = {
   async record(entry: {

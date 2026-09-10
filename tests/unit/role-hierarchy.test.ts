@@ -7,9 +7,12 @@ import {
   canViewTargetUser,
   canGrantPermissionOverride,
   canManageRole,
+  canViewRole,
+  getDefaultLandingRoute,
   getImpersonationIneligibleReason,
   getViewableLayerCandidates,
   getVisibleUserManagementLayers,
+  resolvePostLoginRedirect,
   VIEWABLE_TARGET_LAYERS_BY,
 } from "@/lib/permissions/role-hierarchy";
 import { CORE_RESOURCES, USER_LAYERS, type PermissionMap } from "@/lib/permissions/constants";
@@ -536,6 +539,88 @@ describe("canManageRole (requirement #6/#14 - dynamic role ownership)", () => {
   });
 });
 
+describe("canViewRole (GET /api/roles/[id] ownership - the IDOR fix)", () => {
+  it("Super Admin can view any role", () => {
+    expect(
+      canViewRole({
+        isSuperAdmin: true,
+        actorUserId: "super-1",
+        actorLayer: SUPER_ADMIN,
+        role: { userLayer: MODERATOR, managedBy: "ca-B" },
+      })
+    ).toBe(true);
+  });
+
+  it("Company Admin can view a MODERATOR-layer role it owns itself", () => {
+    expect(
+      canViewRole({
+        isSuperAdmin: false,
+        actorUserId: "ca-1",
+        actorLayer: COMPANY_ADMIN,
+        role: { userLayer: MODERATOR, managedBy: "ca-1" },
+      })
+    ).toBe(true);
+  });
+
+  it("Company Admin can view the shared MODERATOR-layer default (managedBy: null), unlike canManageRole", () => {
+    expect(
+      canViewRole({
+        isSuperAdmin: false,
+        actorUserId: "ca-1",
+        actorLayer: COMPANY_ADMIN,
+        role: { userLayer: MODERATOR, managedBy: null },
+      })
+    ).toBe(true);
+  });
+
+  it("Company Admin A cannot view Company Admin B's MODERATOR-layer role (the IDOR this fixes)", () => {
+    expect(
+      canViewRole({
+        isSuperAdmin: false,
+        actorUserId: "ca-A",
+        actorLayer: COMPANY_ADMIN,
+        role: { userLayer: MODERATOR, managedBy: "ca-B" },
+      })
+    ).toBe(false);
+  });
+
+  it("Company Admin cannot view a role targeting a different layer, even if it happens to own it", () => {
+    expect(
+      canViewRole({
+        isSuperAdmin: false,
+        actorUserId: "ca-1",
+        actorLayer: COMPANY_ADMIN,
+        role: { userLayer: ADMIN, managedBy: "ca-1" },
+      })
+    ).toBe(false);
+  });
+
+  it("Admin (today's read-only Roles overview) can view any role, matching listRolesForActor()'s unscoped roleRepository.list()", () => {
+    expect(
+      canViewRole({
+        isSuperAdmin: false,
+        actorUserId: "admin-1",
+        actorLayer: ADMIN,
+        role: { userLayer: MODERATOR, managedBy: "ca-B" },
+      })
+    ).toBe(true);
+  });
+
+  it("canViewRole is a superset of canManageRole for every Company Admin ownership case", () => {
+    const cases = [
+      { userLayer: MODERATOR, managedBy: "ca-1" },
+      { userLayer: MODERATOR, managedBy: "ca-B" },
+      { userLayer: MODERATOR, managedBy: null },
+      { userLayer: ADMIN, managedBy: "ca-1" },
+    ];
+    for (const role of cases) {
+      if (canManageRole({ isSuperAdmin: false, actorUserId: "ca-1", actorLayer: COMPANY_ADMIN, role })) {
+        expect(canViewRole({ isSuperAdmin: false, actorUserId: "ca-1", actorLayer: COMPANY_ADMIN, role })).toBe(true);
+      }
+    }
+  });
+});
+
 describe("getImpersonationIneligibleReason (requirement #21 - Super Admin 'Login as User', extended to Company Admin -> own Moderators)", () => {
   it("Super Admin: allows impersonating Admin, Company Admin, Moderator, and Customer", () => {
     for (const layer of [ADMIN, COMPANY_ADMIN, MODERATOR, CUSTOMER]) {
@@ -689,5 +774,64 @@ describe("getImpersonationIneligibleReason (requirement #21 - Super Admin 'Login
         })
       ).toMatch(/not authorized/);
     }
+  });
+});
+
+describe("getDefaultLandingRoute (each layer's own dashboard home)", () => {
+  it("Super Admin and Admin both land on /admin", () => {
+    expect(getDefaultLandingRoute({ isSuperAdmin: true, userLayer: SUPER_ADMIN })).toBe("/admin");
+    expect(getDefaultLandingRoute({ isSuperAdmin: false, userLayer: ADMIN })).toBe("/admin");
+  });
+
+  it("Company Admin and Moderator both land on /company-admin (the shared tree)", () => {
+    expect(getDefaultLandingRoute({ isSuperAdmin: false, userLayer: COMPANY_ADMIN })).toBe("/company-admin");
+    expect(getDefaultLandingRoute({ isSuperAdmin: false, userLayer: MODERATOR })).toBe("/company-admin");
+  });
+
+  it("Customer lands on /dashboard", () => {
+    expect(getDefaultLandingRoute({ isSuperAdmin: false, userLayer: CUSTOMER })).toBe("/dashboard");
+  });
+});
+
+describe("resolvePostLoginRedirect (root cause fix - a stale/forged redirectTo must never override the layer's own dashboard tree)", () => {
+  it("Super Admin: a redirectTo pointing at the Company Admin tree is rejected, falling back to /admin", () => {
+    expect(resolvePostLoginRedirect("/company-admin", { isSuperAdmin: true, userLayer: SUPER_ADMIN })).toBe("/admin");
+    expect(resolvePostLoginRedirect("/company-admin/roles/123", { isSuperAdmin: true, userLayer: SUPER_ADMIN })).toBe(
+      "/admin"
+    );
+  });
+
+  it("Super Admin: a redirectTo inside its own /admin tree is honored", () => {
+    expect(resolvePostLoginRedirect("/admin/roles/123", { isSuperAdmin: true, userLayer: SUPER_ADMIN })).toBe(
+      "/admin/roles/123"
+    );
+  });
+
+  it("Company Admin / Moderator: a redirectTo pointing at /admin is rejected, falling back to /company-admin", () => {
+    expect(resolvePostLoginRedirect("/admin", { isSuperAdmin: false, userLayer: COMPANY_ADMIN })).toBe(
+      "/company-admin"
+    );
+    expect(resolvePostLoginRedirect("/admin", { isSuperAdmin: false, userLayer: MODERATOR })).toBe("/company-admin");
+  });
+
+  it("Customer: a redirectTo pointing at /admin or /company-admin is rejected, falling back to /dashboard", () => {
+    expect(resolvePostLoginRedirect("/admin", { isSuperAdmin: false, userLayer: CUSTOMER })).toBe("/dashboard");
+    expect(resolvePostLoginRedirect("/company-admin", { isSuperAdmin: false, userLayer: CUSTOMER })).toBe(
+      "/dashboard"
+    );
+  });
+
+  it("no redirectTo falls back to the default landing route", () => {
+    expect(resolvePostLoginRedirect(null, { isSuperAdmin: true, userLayer: SUPER_ADMIN })).toBe("/admin");
+    expect(resolvePostLoginRedirect(undefined, { isSuperAdmin: false, userLayer: CUSTOMER })).toBe("/dashboard");
+  });
+
+  it("rejects a protocol-relative or absolute redirectTo (open-redirect hardening)", () => {
+    expect(resolvePostLoginRedirect("//evil.example.com", { isSuperAdmin: true, userLayer: SUPER_ADMIN })).toBe(
+      "/admin"
+    );
+    expect(
+      resolvePostLoginRedirect("https://evil.example.com/admin", { isSuperAdmin: true, userLayer: SUPER_ADMIN })
+    ).toBe("/admin");
   });
 });

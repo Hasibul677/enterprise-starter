@@ -1,6 +1,14 @@
 "use client";
 
-import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import { MoreVertical } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
@@ -21,7 +29,7 @@ export function RowActionsMenu({ children, label = "Actions" }: { children: Reac
   // this subtree, and closing the menu on click must not unmount that dialog
   // before its `open` state gets a chance to render it.
   const [everOpened, setEverOpened] = useState(false);
-  const [pos, setPos] = useState({ top: 0, right: 0 });
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number }>({ top: 0, right: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -33,6 +41,24 @@ export function RowActionsMenu({ children, label = "Actions" }: { children: Reac
     setEverOpened(true);
     setOpen(true);
   }
+
+  // Re-measure once the panel is actually in the DOM: if it doesn't fit
+  // below the trigger within the viewport, flip it to open upward instead
+  // of letting it run off-screen. Runs before paint so there's no flicker.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const trigger = triggerRef.current;
+    const panel = panelRef.current;
+    if (!trigger || !panel) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const fitsBelow = triggerRect.bottom + 4 + panelRect.height + 8 <= window.innerHeight;
+    setPos({
+      top: fitsBelow ? triggerRect.bottom + 4 : undefined,
+      bottom: fitsBelow ? undefined : window.innerHeight - triggerRect.top + 4,
+      right: window.innerWidth - triggerRect.right,
+    });
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -69,7 +95,7 @@ export function RowActionsMenu({ children, label = "Actions" }: { children: Reac
             role="menu"
             aria-label={label}
             hidden={!open}
-            style={{ top: pos.top, right: pos.right }}
+            style={{ top: pos.top, bottom: pos.bottom, right: pos.right }}
             className="fixed z-50 w-48 overflow-hidden rounded-md border border-line bg-surface py-1 shadow-lg"
           >
             <RowActionsMenuContext.Provider value={close}>{children}</RowActionsMenuContext.Provider>

@@ -4,7 +4,7 @@ import { UserModel } from "@/models/user.model";
 import { auditLogRepository } from "@/repositories/audit-log.repository";
 import { ValidationError, NotFoundError, ConflictError, AuthorizationError } from "@/lib/errors/app-error";
 import { SUPER_ADMIN_ROLE_SLUG, USER_LAYERS } from "@/lib/permissions/constants";
-import { CREATABLE_ROLE_LAYERS_BY, canManageRole } from "@/lib/permissions/role-hierarchy";
+import { CREATABLE_ROLE_LAYERS_BY, canManageRole, canViewRole } from "@/lib/permissions/role-hierarchy";
 import type { ResolvedAccess } from "@/lib/auth/current-user";
 import type { UserLayer } from "@/lib/permissions/constants";
 import type { RoleCreateInput } from "@/features/roles/schemas/role-create.schema";
@@ -54,6 +54,30 @@ export async function createRole(input: RoleCreateInput, access: ResolvedAccess)
     entityId: String(role._id),
     metadata: { userLayer, managedBy },
   });
+
+  return role;
+}
+
+/**
+ * Fetches a single role with VIEW authority (canViewRole()) - same scope as
+ * listRolesForActor(), so a COMPANY_ADMIN can't read a peer COMPANY_ADMIN's
+ * custom role (permissions map, managedBy, isSystem) by guessing its id, even
+ * though this route is otherwise a pure read with no write authority implied.
+ */
+export async function getRoleForViewer(roleId: string, access: ResolvedAccess) {
+  const role = await roleRepository.findById(roleId);
+  if (!role) throw new NotFoundError("Role not found.");
+
+  if (
+    !canViewRole({
+      isSuperAdmin: access.isSuperAdmin,
+      actorUserId: String(access.user._id),
+      actorLayer: access.userLayer,
+      role: roleAuthorityFields(role),
+    })
+  ) {
+    throw new AuthorizationError("You do not have authority to view this role.");
+  }
 
   return role;
 }
