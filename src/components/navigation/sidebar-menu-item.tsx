@@ -15,11 +15,40 @@ function isRouteActive(pathname: string, route?: string | null): boolean {
   return pathname === route || pathname.startsWith(`${route}/`);
 }
 
-/** Does this node or any descendant match the current route? Used to keep a
- * collapsed group's icon visibly "active" even while its children are hidden. */
-function containsActiveRoute(node: MenuTreeNode, pathname: string): boolean {
-  if (isRouteActive(pathname, node.route)) return true;
-  return node.children.some((child) => containsActiveRoute(child, pathname));
+/**
+ * Finds the single most-specific (longest matching route) node anywhere in
+ * the tree for the current pathname. A plain per-node `isRouteActive` check
+ * would let a route that's a literal path-prefix of an unrelated branch's
+ * route (e.g. Dashboard at "/admin" vs. Roles at "/admin/roles") match every
+ * page under that prefix, keeping Dashboard highlighted everywhere - see
+ * menu-management-view.tsx/seed.ts, where Dashboard intentionally reuses the
+ * shared area's own root route. Comparing route length picks whichever
+ * matching route is the closest, most specific ancestor of `pathname`,
+ * so only ONE node in the whole tree is ever "the" active one.
+ */
+function findActiveNodeId(nodes: MenuTreeNode[], pathname: string): string | null {
+  let bestId: string | null = null;
+  let bestLength = -1;
+  function visit(list: MenuTreeNode[]) {
+    for (const node of list) {
+      if (node.route && isRouteActive(pathname, node.route) && node.route.length > bestLength) {
+        bestLength = node.route.length;
+        bestId = node._id;
+      }
+      if (node.children.length > 0) visit(node.children);
+    }
+  }
+  visit(nodes);
+  return bestId;
+}
+
+/** Does this node or any descendant match the resolved active node? Used to
+ * keep a collapsed group's icon (and an expanded-by-default group) visibly
+ * "active" even while the actually-active row is one of its children. */
+function containsActiveId(node: MenuTreeNode, activeId: string | null): boolean {
+  if (!activeId) return false;
+  if (node._id === activeId) return true;
+  return node.children.some((child) => containsActiveId(child, activeId));
 }
 
 const rowBase =
@@ -29,9 +58,7 @@ const rowBase =
 function rowClasses(isActive: boolean) {
   return cn(
     rowBase,
-    isActive
-      ? "bg-accent-soft text-accent"
-      : "text-ink-soft hover:bg-paper hover:text-ink active:bg-accent-soft/70"
+    isActive ? "bg-accent-soft text-accent" : "text-ink-soft hover:bg-paper hover:text-ink active:bg-accent-soft/70"
   );
 }
 
@@ -61,14 +88,25 @@ export function SidebarMenuList({
   nodes,
   depth = 0,
   collapsed = false,
+  activeId,
 }: {
   nodes: MenuTreeNode[];
   depth?: number;
   collapsed?: boolean;
+  /**
+   * Which node is "the" active one, resolved once for the whole tree.
+   * Only the root call (depth 0) is ever given the full tree needed to
+   * disambiguate across unrelated branches (e.g. Dashboard vs. a totally
+   * different branch's Roles page) - every recursive call below just
+   * threads that same id straight through instead of recomputing it from a
+   * subtree that can't see sibling branches elsewhere in the tree.
+   */
+  activeId?: string | null;
 }) {
   const pathname = usePathname();
+  const resolvedActiveId = depth === 0 ? findActiveNodeId(nodes, pathname) : (activeId ?? null);
   const [expandedId, setExpandedId] = useState<string | null>(() => {
-    const activeSibling = nodes.find((n) => containsActiveRoute(n, pathname));
+    const activeSibling = nodes.find((n) => containsActiveId(n, resolvedActiveId));
     return activeSibling?._id ?? null;
   });
 
@@ -80,10 +118,9 @@ export function SidebarMenuList({
           node={node}
           depth={depth}
           collapsed={collapsed}
+          activeId={resolvedActiveId}
           expanded={expandedId === node._id}
-          onToggleExpanded={() =>
-            setExpandedId((prev) => (prev === node._id ? null : node._id))
-          }
+          onToggleExpanded={() => setExpandedId((prev) => (prev === node._id ? null : node._id))}
           onSelect={() => setExpandedId(node._id)}
         />
       ))}
@@ -109,6 +146,7 @@ function SidebarMenuItem({
   node,
   depth,
   collapsed,
+  activeId,
   expanded,
   onToggleExpanded,
   onSelect,
@@ -116,12 +154,12 @@ function SidebarMenuItem({
   node: MenuTreeNode;
   depth: number;
   collapsed: boolean;
+  activeId: string | null;
   expanded: boolean;
   onToggleExpanded: () => void;
   onSelect: () => void;
 }) {
-  const pathname = usePathname();
-  const isActive = isRouteActive(pathname, node.route);
+  const isActive = node._id === activeId;
   const hasChildren = node.children.length > 0;
   const [flyoutOpen, setFlyoutOpen] = useState(false);
   const [flyoutPos, setFlyoutPos] = useState({ top: 0, left: 0 });
@@ -131,7 +169,7 @@ function SidebarMenuItem({
   // A parent with no route of its own (a pure group header) still needs to
   // read as "active" whenever one of its descendants is the current route -
   // in both the expanded accordion and the collapsed flyout trigger.
-  const groupIsActive = !node.route && containsActiveRoute(node, pathname);
+  const groupIsActive = !node.route && containsActiveId(node, activeId);
 
   function openFlyout() {
     const rect = triggerRef.current?.getBoundingClientRect();
@@ -221,7 +259,7 @@ function SidebarMenuItem({
             >
               <p className="truncate px-2 py-1 text-xs font-semibold text-ink-soft">{node.label}</p>
               <div className="flex flex-col gap-0.5">
-                <SidebarMenuList nodes={node.children} depth={1} collapsed={false} />
+                <SidebarMenuList nodes={node.children} depth={1} collapsed={false} activeId={activeId} />
               </div>
             </div>,
             document.body
@@ -243,7 +281,7 @@ function SidebarMenuItem({
               transition={{ duration: 0.15 }}
               className="mt-0.5 flex flex-col gap-0.5 overflow-hidden"
             >
-              <SidebarMenuList nodes={node.children} depth={depth + 1} collapsed={false} />
+              <SidebarMenuList nodes={node.children} depth={depth + 1} collapsed={false} activeId={activeId} />
             </motion.div>
           )}
         </AnimatePresence>

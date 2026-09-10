@@ -50,24 +50,92 @@ export const MANAGEABLE_TARGET_LAYERS_BY: Record<UserLayer, UserLayer[]> = {
 };
 
 /**
+ * Fixed, linear positional order for VIEW-ONLY layer visibility ("FINAL RBAC
+ * RULE": a user can never view any layer above/parent to its own, and - with
+ * SUPER_ADMIN as the sole exception - never its own layer's peers either,
+ * only the layers strictly below it). This is deliberately a flat, linear
+ * cut - independent of the tree-shaped MANAGEABLE_TARGET_LAYERS_BY authority
+ * above (where SUPER_ADMIN's two branches, ADMIN and COMPANY_ADMIN, are
+ * siblings, not parent/child) - that table still separately governs real
+ * write authority and is completely unaffected by this.
+ */
+const LAYER_VISIBILITY_ORDER: UserLayer[] = [
+  USER_LAYERS.SUPER_ADMIN,
+  USER_LAYERS.ADMIN,
+  USER_LAYERS.COMPANY_ADMIN,
+  USER_LAYERS.MODERATOR,
+  USER_LAYERS.CUSTOMER,
+];
+
+/**
+ * Which layers a user belonging to `actorLayer` may ever see at all (list/
+ * tab visibility, read-only detail) - every layer strictly below it in the
+ * fixed hierarchy above, NEVER a parent/higher layer, regardless of
+ * permissions. Only SUPER_ADMIN can ever see the SUPER_ADMIN layer, and by
+ * the same rule it's the only layer that can see its OWN layer's tab at all
+ * (its peers) - every other layer (ADMIN, COMPANY_ADMIN, MODERATOR) sees
+ * strictly the layers below it, never its own peers. This only answers "is
+ * this layer even a candidate" - whether it's actually shown/reachable
+ * still depends on the caller separately holding the relevant VIEW
+ * permission (e.g. `users.view`) on top of this, so permissions can only
+ * narrow this list, never widen it.
+ */
+export function getViewableLayerCandidates(actorLayer: UserLayer): UserLayer[] {
+  const idx = LAYER_VISIBILITY_ORDER.indexOf(actorLayer);
+  if (idx === -1) return [];
+  // SUPER_ADMIN is the sole exception that can see its own layer (and thus
+  // its own peers) - everyone else only sees layers strictly below them.
+  const start = actorLayer === USER_LAYERS.SUPER_ADMIN ? idx : idx + 1;
+  return LAYER_VISIBILITY_ORDER.slice(start);
+}
+
+/**
  * Which layers a user belonging to `key` is allowed to VIEW (list/read-only
- * detail), a superset of MANAGEABLE_TARGET_LAYERS_BY. Today this only
- * differs for COMPANY_ADMIN: it may view (but never edit/deactivate/
- * reassign-role/grant-permissions/impersonate) CUSTOMER accounts, on top of
- * its full MODERATOR management. Every other manage-affecting check (edit,
- * delete, role assignment, permission overrides, impersonation) must keep
- * using MANAGEABLE_TARGET_LAYERS_BY / canManageTargetUser() or the
- * dedicated PERMISSION_GRANTERS / IMPERSONATION_TARGET_LAYERS_BY tables -
- * never this one - so read-only access can never be leveraged into write
- * access.
+ * detail) - see getViewableLayerCandidates() above: everything strictly
+ * below it in the fixed 5-layer hierarchy, never a parent/higher layer, and
+ * (SUPER_ADMIN aside) never its own layer's peers either. A strict superset
+ * of MANAGEABLE_TARGET_LAYERS_BY for every layer (e.g. a COMPANY_ADMIN may
+ * now VIEW - but never edit/deactivate/reassign-role/grant-permissions/
+ * impersonate - any CUSTOMER account, on top of its full MODERATOR
+ * management). Every manage-affecting check (edit, delete, role assignment,
+ * permission overrides, impersonation) must keep using
+ * MANAGEABLE_TARGET_LAYERS_BY / canManageTargetUser() or the dedicated
+ * PERMISSION_GRANTERS / IMPERSONATION_TARGET_LAYERS_BY tables - never this
+ * one - so read-only access can never be leveraged into write access.
  */
 export const VIEWABLE_TARGET_LAYERS_BY: Record<UserLayer, UserLayer[]> = {
-  [USER_LAYERS.SUPER_ADMIN]: MANAGEABLE_TARGET_LAYERS_BY[USER_LAYERS.SUPER_ADMIN],
-  [USER_LAYERS.ADMIN]: MANAGEABLE_TARGET_LAYERS_BY[USER_LAYERS.ADMIN],
-  [USER_LAYERS.COMPANY_ADMIN]: [USER_LAYERS.MODERATOR, USER_LAYERS.CUSTOMER],
-  [USER_LAYERS.MODERATOR]: [],
-  [USER_LAYERS.CUSTOMER]: [],
+  [USER_LAYERS.SUPER_ADMIN]: getViewableLayerCandidates(USER_LAYERS.SUPER_ADMIN),
+  [USER_LAYERS.ADMIN]: getViewableLayerCandidates(USER_LAYERS.ADMIN),
+  [USER_LAYERS.COMPANY_ADMIN]: getViewableLayerCandidates(USER_LAYERS.COMPANY_ADMIN),
+  [USER_LAYERS.MODERATOR]: getViewableLayerCandidates(USER_LAYERS.MODERATOR),
+  [USER_LAYERS.CUSTOMER]: getViewableLayerCandidates(USER_LAYERS.CUSTOMER),
 };
+
+/**
+ * Which layer tabs actually render on the Users ("User Management") page for
+ * a given actor: the fixed hierarchy candidates above (every layer strictly
+ * below its own - or, for SUPER_ADMIN only, its own layer too - never a
+ * parent) are the ceiling - permissions can only ever narrow that list,
+ * never widen it past a parent layer or the actor's own peers. Since `users` is a
+ * single blanket resource (no per-layer granularity), the one `users.view`
+ * check is applied to the WHOLE candidate set at once rather than per layer -
+ * checking each layer independently against the same single permission
+ * would either always pass or always fail together anyway, and doing it
+ * per-layer risks reading as "every tab requires its own separate grant" and
+ * over-filtering down to zero tabs for an actor who does hold `users.view`.
+ * A CUSTOMER actor never reaches this at all (blocked earlier by
+ * requireAdminAreaPage()/requireCompanyAdminAreaPage() - it has no User
+ * Management module access, full stop).
+ */
+export function getVisibleUserManagementLayers(access: {
+  isSuperAdmin: boolean;
+  userLayer: UserLayer;
+  permissions: PermissionMap;
+}): UserLayer[] {
+  if (access.isSuperAdmin) return LAYER_VISIBILITY_ORDER;
+  if (!hasPermission(access.permissions, CORE_RESOURCES.USERS, "view")) return [];
+  return getViewableLayerCandidates(access.userLayer);
+}
 
 /**
  * Who may grant PER-USER permission overrides, and to which layer

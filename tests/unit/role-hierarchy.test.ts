@@ -8,10 +8,18 @@ import {
   canGrantPermissionOverride,
   canManageRole,
   getImpersonationIneligibleReason,
+  getViewableLayerCandidates,
+  getVisibleUserManagementLayers,
+  VIEWABLE_TARGET_LAYERS_BY,
 } from "@/lib/permissions/role-hierarchy";
-import { USER_LAYERS } from "@/lib/permissions/constants";
+import { CORE_RESOURCES, USER_LAYERS, type PermissionMap } from "@/lib/permissions/constants";
 
 const { SUPER_ADMIN, ADMIN, COMPANY_ADMIN, MODERATOR, CUSTOMER } = USER_LAYERS;
+
+const usersViewOnly: PermissionMap = {
+  [CORE_RESOURCES.USERS]: { view: true, add: false, edit: false, delete: false, comment: false },
+};
+const noPermissions: PermissionMap = {};
 
 describe("canCreateUserInLayer (requirement #8/#15 - who can create/assign which layer)", () => {
   it("Super Admin can create Admin and Company Admin", () => {
@@ -206,9 +214,11 @@ describe("canViewLayer / canViewTargetUser (Company Admin read-only access to it
     ).toBe(false);
   });
 
-  it("Admin's view authority is unchanged (Customer only, same as manage)", () => {
-    expect(canViewLayer(ADMIN, CUSTOMER)).toBe(true);
+  it("Admin can view everything strictly below it (fixed hierarchy), but never a parent or its own ADMIN peers", () => {
     expect(canViewLayer(ADMIN, ADMIN)).toBe(false);
+    expect(canViewLayer(ADMIN, COMPANY_ADMIN)).toBe(true);
+    expect(canViewLayer(ADMIN, MODERATOR)).toBe(true);
+    expect(canViewLayer(ADMIN, CUSTOMER)).toBe(true);
     expect(canViewLayer(ADMIN, SUPER_ADMIN)).toBe(false);
   });
 
@@ -234,6 +244,113 @@ describe("canViewLayer / canViewTargetUser (Company Admin read-only access to it
         targetLayer: CUSTOMER,
       })
     ).toBe(true);
+  });
+});
+
+describe("getViewableLayerCandidates / VIEWABLE_TARGET_LAYERS_BY (FINAL RBAC RULE - fixed linear layer-tab visibility)", () => {
+  it("Super Admin's candidates are all 5 layers, including itself", () => {
+    expect(getViewableLayerCandidates(SUPER_ADMIN)).toEqual([SUPER_ADMIN, ADMIN, COMPANY_ADMIN, MODERATOR, CUSTOMER]);
+  });
+
+  it("Admin's candidates are strictly everything below it - never Super Admin, and never its own ADMIN peers", () => {
+    expect(getViewableLayerCandidates(ADMIN)).toEqual([COMPANY_ADMIN, MODERATOR, CUSTOMER]);
+  });
+
+  it("Company Admin's candidates are strictly everything below it - never Admin/Super Admin, and never its own COMPANY_ADMIN peers", () => {
+    expect(getViewableLayerCandidates(COMPANY_ADMIN)).toEqual([MODERATOR, CUSTOMER]);
+  });
+
+  it("Moderator's candidates are strictly Customer - never any parent layer, and never its own MODERATOR peers", () => {
+    expect(getViewableLayerCandidates(MODERATOR)).toEqual([CUSTOMER]);
+  });
+
+  it("Customer has no candidates at all - it never reaches the User Management module anyway (blocked earlier by the area route guards)", () => {
+    expect(getViewableLayerCandidates(CUSTOMER)).toEqual([]);
+  });
+
+  it("only Super Admin can ever see the SUPER_ADMIN layer", () => {
+    for (const actorLayer of [SUPER_ADMIN, ADMIN, COMPANY_ADMIN, MODERATOR, CUSTOMER]) {
+      const candidates = getViewableLayerCandidates(actorLayer);
+      if (actorLayer === SUPER_ADMIN) {
+        expect(candidates).toContain(SUPER_ADMIN);
+      } else {
+        expect(candidates).not.toContain(SUPER_ADMIN);
+      }
+    }
+  });
+
+  it("no layer other than Super Admin can ever see its own layer's tab (its own peers)", () => {
+    for (const actorLayer of [ADMIN, COMPANY_ADMIN, MODERATOR, CUSTOMER]) {
+      expect(getViewableLayerCandidates(actorLayer)).not.toContain(actorLayer);
+    }
+    // Super Admin is the sole exception.
+    expect(getViewableLayerCandidates(SUPER_ADMIN)).toContain(SUPER_ADMIN);
+  });
+
+  it("no layer's candidate list ever includes a layer above it in the fixed hierarchy", () => {
+    const order = [SUPER_ADMIN, ADMIN, COMPANY_ADMIN, MODERATOR, CUSTOMER];
+    order.forEach((actorLayer, actorIdx) => {
+      const candidates = getViewableLayerCandidates(actorLayer);
+      order.slice(0, actorIdx).forEach((parentLayer) => {
+        expect(candidates).not.toContain(parentLayer);
+      });
+    });
+  });
+
+  it("VIEWABLE_TARGET_LAYERS_BY is derived from the same fixed hierarchy", () => {
+    for (const layer of [SUPER_ADMIN, ADMIN, COMPANY_ADMIN, MODERATOR, CUSTOMER]) {
+      expect(VIEWABLE_TARGET_LAYERS_BY[layer]).toEqual(getViewableLayerCandidates(layer));
+    }
+  });
+});
+
+describe("getVisibleUserManagementLayers (Users page tab visibility: hierarchy first, then effective permissions)", () => {
+  it("Super Admin always sees all 5 tabs, including its own, regardless of its permission map", () => {
+    expect(
+      getVisibleUserManagementLayers({ isSuperAdmin: true, userLayer: SUPER_ADMIN, permissions: noPermissions })
+    ).toEqual([SUPER_ADMIN, ADMIN, COMPANY_ADMIN, MODERATOR, CUSTOMER]);
+  });
+
+  it("Admin logged in as itself (e.g. via impersonation) never sees the Super Admin tab, nor its own ADMIN tab, even with full users permissions", () => {
+    const layers = getVisibleUserManagementLayers({
+      isSuperAdmin: false,
+      userLayer: ADMIN,
+      permissions: usersViewOnly,
+    });
+    expect(layers).not.toContain(SUPER_ADMIN);
+    expect(layers).not.toContain(ADMIN);
+    expect(layers).toEqual([COMPANY_ADMIN, MODERATOR, CUSTOMER]);
+  });
+
+  it("a Moderator with users.view sees only Customer - never its own MODERATOR tab", () => {
+    const layers = getVisibleUserManagementLayers({
+      isSuperAdmin: false,
+      userLayer: MODERATOR,
+      permissions: usersViewOnly,
+    });
+    expect(layers).not.toContain(MODERATOR);
+    expect(layers).toEqual([CUSTOMER]);
+  });
+
+  it("lacking users.view hides every tab, not just some - permissions only ever narrow the hierarchy candidates, never widen them", () => {
+    expect(
+      getVisibleUserManagementLayers({ isSuperAdmin: false, userLayer: ADMIN, permissions: noPermissions })
+    ).toEqual([]);
+    expect(
+      getVisibleUserManagementLayers({ isSuperAdmin: false, userLayer: MODERATOR, permissions: noPermissions })
+    ).toEqual([]);
+  });
+
+  it("Company Admin with users.view sees everything below it, never Admin, Super Admin, or its own COMPANY_ADMIN peers", () => {
+    const layers = getVisibleUserManagementLayers({
+      isSuperAdmin: false,
+      userLayer: COMPANY_ADMIN,
+      permissions: usersViewOnly,
+    });
+    expect(layers).toEqual([MODERATOR, CUSTOMER]);
+    expect(layers).not.toContain(COMPANY_ADMIN);
+    expect(layers).not.toContain(ADMIN);
+    expect(layers).not.toContain(SUPER_ADMIN);
   });
 });
 

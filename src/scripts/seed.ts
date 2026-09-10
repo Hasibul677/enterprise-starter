@@ -69,7 +69,13 @@ async function main() {
   // (requirement #12 "do not simply give ADMIN all Super Admin permissions")
   // - a Super Admin/Company Admin explicitly grants more via the Roles page
   // or a per-user permission override.
-  const roleSeeds: { slug: string; name: string; description: string; userLayer: UserLayer; permissions: Record<string, unknown> }[] = [
+  const roleSeeds: {
+    slug: string;
+    name: string;
+    description: string;
+    userLayer: UserLayer;
+    permissions: Record<string, unknown>;
+  }[] = [
     {
       slug: ROLE_SLUGS.SUPER_ADMIN,
       name: "Super Admin",
@@ -167,7 +173,9 @@ async function main() {
   // enforces going forward (user.service.ts#resolveRolesLayer).
   const usersMissingLayer = await UserModel.find({ userLayer: { $exists: false } }).populate("roles");
   for (const u of usersMissingLayer) {
-    const layers = new Set(((u.roles ?? []) as unknown as { userLayer?: UserLayer }[]).map((r) => r.userLayer).filter(Boolean));
+    const layers = new Set(
+      ((u.roles ?? []) as unknown as { userLayer?: UserLayer }[]).map((r) => r.userLayer).filter(Boolean)
+    );
     u.userLayer = (layers.size === 1 ? Array.from(layers)[0] : USER_LAYERS.CUSTOMER) as never;
     await u.save({ validateBeforeSave: false });
   }
@@ -275,23 +283,78 @@ async function main() {
     userLayer: USER_LAYERS.CUSTOMER,
   });
 
-  // --- SUPER_ADMIN / ADMIN scoped menu (requirement #7). Users, Roles, and
-  // Menus (plus the old standalone Permission Management overview) are now
-  // consolidated into a single layer-tabbed management area - see
-  // src/components/management/management-view.tsx - rather than 5 separate
-  // nav entries. Repurposing the existing "user-management" key (rather than
-  // creating a new one) means `yarn seed` updates it in place for anyone who
-  // already has it in their database.
+  // --- SUPER_ADMIN / ADMIN scoped menu (requirement #7). "User Management"
+  // is a parent group (no route of its own - see menu-service.ts#build,
+  // which only keeps a route-less node in the tree when it has a visible
+  // child) containing Users/Roles/Menus as separate pages. The Users page
+  // itself still tabs across all 5 layers and still embeds the "Add role"/
+  // "Add menu" quick actions (management-view.tsx) - Roles/Menus below are
+  // ADDITIONAL full CRUD surfaces, not a replacement.
+  await MenuModel.findOneAndUpdate(
+    { key: "admin-dashboard" },
+    {
+      name: "Dashboard",
+      key: "admin-dashboard",
+      label: "Dashboard",
+      // Distinct from the company-admin/customer "dashboard" slugs below:
+      // Menu.slug is only unique among siblings under the SAME parentId (see
+      // the compound index on menu.model.ts), and all 3 Dashboard entries
+      // are top-level (parentId: null), so they'd otherwise collide.
+      slug: "admin-dashboard",
+      route: "/admin",
+      parentId: null,
+      level: 1,
+      sortOrder: 0,
+      isActive: true,
+      isVisible: true,
+      icon: "layout-dashboard",
+      // No resourceKey: buildEffectiveMenuTree()'s canSee() always passes a
+      // menu with no resourceKey, same mechanism the CUSTOMER "dashboard"
+      // entry below already relies on - Dashboard must always be visible to
+      // every layer, never hidden by permission filtering. Scope still
+      // restricts it to the admin-area layers; actual route protection comes
+      // from (admin)/admin/layout.tsx's requireAdminAreaPage(), not from this
+      // menu entry.
+      resourceKey: null,
+      scope: MENU_SCOPES.SUPER_ADMIN_ADMIN,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  const adminUserManagementParent = await MenuModel.findOneAndUpdate(
+    { key: "user-management-parent-admin" },
+    {
+      name: "User Management",
+      key: "user-management-parent-admin",
+      label: "User Management",
+      slug: "user-management",
+      route: null,
+      parentId: null,
+      level: 1,
+      sortOrder: 1,
+      isActive: true,
+      isVisible: true,
+      icon: "users",
+      resourceKey: null,
+      scope: MENU_SCOPES.SUPER_ADMIN_ADMIN,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  // Repurposing the existing "user-management" key (rather than creating a
+  // new one) means `yarn seed` updates it in place for anyone who already
+  // has it in their database - only its label/slug/parentId/level/sortOrder
+  // change; its key, route, resourceKey and scope stay exactly as before.
   await MenuModel.findOneAndUpdate(
     { key: "user-management" },
     {
-      name: "Management",
+      name: "Users",
       key: "user-management",
-      label: "Management",
-      slug: "management",
+      label: "Users",
+      slug: "users",
       route: "/admin/management",
-      parentId: null,
-      level: 1,
+      parentId: adminUserManagementParent._id,
+      level: 2,
       sortOrder: 1,
       isActive: true,
       isVisible: true,
@@ -306,11 +369,62 @@ async function main() {
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 
+  await MenuModel.findOneAndUpdate(
+    { key: "roles-management-admin" },
+    {
+      name: "Roles",
+      key: "roles-management-admin",
+      label: "Roles",
+      slug: "roles",
+      route: "/admin/roles",
+      parentId: adminUserManagementParent._id,
+      level: 2,
+      sortOrder: 2,
+      isActive: true,
+      isVisible: true,
+      icon: "shield",
+      resourceKey: CORE_RESOURCES.ROLES,
+      scope: MENU_SCOPES.SUPER_ADMIN_ADMIN,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  await MenuModel.findOneAndUpdate(
+    { key: "menus-management-admin" },
+    {
+      name: "Menus",
+      key: "menus-management-admin",
+      label: "Menus",
+      slug: "menus",
+      route: "/admin/menus",
+      parentId: adminUserManagementParent._id,
+      level: 2,
+      sortOrder: 3,
+      isActive: true,
+      isVisible: true,
+      icon: "list",
+      resourceKey: CORE_RESOURCES.MENUS,
+      scope: MENU_SCOPES.SUPER_ADMIN_ADMIN,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
   // Retire the now-obsolete child/sibling menu entries this consolidation
   // replaces - findOneAndUpdate's upsert-by-key never deletes a stale key on
   // its own, so a one-time cleanup is needed to avoid dead sidebar links.
   await MenuModel.deleteMany({
-    key: { $in: ["users", "user-list", "roles", "menus", "permission-management", "moderators", "moderator-list", "moderator-roles"] },
+    key: {
+      $in: [
+        "users",
+        "user-list",
+        "roles",
+        "menus",
+        "permission-management",
+        "moderators",
+        "moderator-list",
+        "moderator-roles",
+      ],
+    },
   });
 
   await MenuModel.findOneAndUpdate(
@@ -334,28 +448,95 @@ async function main() {
   );
 
   // --- COMPANY_ADMIN / MODERATOR scoped menu (requirement #7) - a separate
-  // tree from the one above, per requirement #4. Moderators + Roles are
-  // consolidated the same way into /company-admin/management (no Menus
-  // section on this side - see management-view.tsx for why).
+  // tree from the one above, per requirement #4. Same "User Management"
+  // parent-group shape as the admin side, but no Menus entry - menu
+  // management stays admin-only (see menus/[id]/route.ts, requireAdminAreaAccess).
   await MenuModel.findOneAndUpdate(
-    { key: "moderator-management" },
+    { key: "company-admin-dashboard" },
     {
-      name: "Management",
-      key: "moderator-management",
-      label: "Management",
-      // Distinct from the admin-side "management" slug: both are top-level
-      // (parentId: null) entries, and Menu.slug is only unique among
-      // siblings (see the unique compound index on menu.model.ts) - sharing
-      // "management" across these two roots collides on that index.
-      slug: "moderator-management",
-      route: "/company-admin/management",
+      name: "Dashboard",
+      key: "company-admin-dashboard",
+      label: "Dashboard",
+      // See "admin-dashboard" above for why this can't just be "dashboard".
+      slug: "company-admin-dashboard",
+      route: "/company-admin",
+      parentId: null,
+      level: 1,
+      sortOrder: 0,
+      isActive: true,
+      isVisible: true,
+      icon: "layout-dashboard",
+      // No resourceKey - always visible, see the admin-side "admin-dashboard"
+      // entry above for the full rationale.
+      resourceKey: null,
+      scope: MENU_SCOPES.COMPANY_ADMIN_MODERATOR,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  const companyAdminUserManagementParent = await MenuModel.findOneAndUpdate(
+    { key: "user-management-parent-company-admin" },
+    {
+      name: "User Management",
+      key: "user-management-parent-company-admin",
+      label: "User Management",
+      // Distinct from the admin-side parent's "user-management" slug: both
+      // are top-level (parentId: null), and slug is only unique among
+      // siblings under the same parent (menu.model.ts compound index).
+      slug: "company-user-management",
+      route: null,
       parentId: null,
       level: 1,
       sortOrder: 1,
       isActive: true,
       isVisible: true,
       icon: "users",
+      resourceKey: null,
+      scope: MENU_SCOPES.COMPANY_ADMIN_MODERATOR,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  await MenuModel.findOneAndUpdate(
+    { key: "moderator-management" },
+    {
+      name: "Users",
+      key: "moderator-management",
+      label: "Users",
+      // Distinct from the admin-side "users" slug: both are now siblings
+      // under their own "User Management" parent, and Menu.slug is only
+      // unique among siblings (see the unique compound index on
+      // menu.model.ts) - but each parent has its own sibling set, so reusing
+      // "users" here is fine.
+      slug: "users",
+      route: "/company-admin/management",
+      parentId: companyAdminUserManagementParent._id,
+      level: 2,
+      sortOrder: 1,
+      isActive: true,
+      isVisible: true,
+      icon: "users",
       resourceKey: CORE_RESOURCES.USERS,
+      scope: MENU_SCOPES.COMPANY_ADMIN_MODERATOR,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  await MenuModel.findOneAndUpdate(
+    { key: "roles-management-company-admin" },
+    {
+      name: "Roles",
+      key: "roles-management-company-admin",
+      label: "Roles",
+      slug: "roles",
+      route: "/company-admin/roles",
+      parentId: companyAdminUserManagementParent._id,
+      level: 2,
+      sortOrder: 2,
+      isActive: true,
+      isVisible: true,
+      icon: "shield",
+      resourceKey: CORE_RESOURCES.ROLES,
       scope: MENU_SCOPES.COMPANY_ADMIN_MODERATOR,
     },
     { upsert: true, new: true, setDefaultsOnInsert: true }
