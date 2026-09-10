@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   canCreateUserInLayer,
+  canManageLayer,
   canManageTargetUser,
+  canViewLayer,
+  canViewTargetUser,
   canGrantPermissionOverride,
   canManageRole,
   getImpersonationIneligibleReason,
@@ -147,6 +150,90 @@ describe("canManageTargetUser (requirement #3/#10 - view/edit/deactivate authori
         targetLayer: CUSTOMER,
       })
     ).toBe(false);
+  });
+});
+
+describe("canViewLayer / canViewTargetUser (Company Admin read-only access to its CUSTOMER tab)", () => {
+  it("Company Admin can VIEW Customer, but still cannot MANAGE Customer", () => {
+    expect(canViewLayer(COMPANY_ADMIN, CUSTOMER)).toBe(true);
+    expect(canManageLayer(COMPANY_ADMIN, CUSTOMER)).toBe(false);
+  });
+
+  it("canViewLayer is a superset of canManageLayer for every layer", () => {
+    for (const actorLayer of [SUPER_ADMIN, ADMIN, COMPANY_ADMIN, MODERATOR, CUSTOMER]) {
+      for (const targetLayer of [SUPER_ADMIN, ADMIN, COMPANY_ADMIN, MODERATOR, CUSTOMER]) {
+        if (canManageLayer(actorLayer, targetLayer)) {
+          expect(canViewLayer(actorLayer, targetLayer)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("Company Admin can view any Customer account, with no ownership restriction (unlike Moderators)", () => {
+    expect(
+      canViewTargetUser({
+        actorUserId: "ca-1",
+        actorLayer: COMPANY_ADMIN,
+        isSuperAdmin: false,
+        targetUserId: "customer-1",
+        targetLayer: CUSTOMER,
+      })
+    ).toBe(true);
+  });
+
+  it("Company Admin cannot MANAGE (edit/delete/role/permissions) a Customer even though it can view them", () => {
+    expect(
+      canManageTargetUser({
+        actorUserId: "ca-1",
+        actorLayer: COMPANY_ADMIN,
+        isSuperAdmin: false,
+        targetUserId: "customer-1",
+        targetLayer: CUSTOMER,
+      })
+    ).toBe(false);
+  });
+
+  it("Company Admin viewing a Moderator still requires ownership, same as managing one", () => {
+    expect(
+      canViewTargetUser({
+        actorUserId: "ca-A",
+        actorLayer: COMPANY_ADMIN,
+        isSuperAdmin: false,
+        targetUserId: "mod-of-B",
+        targetLayer: MODERATOR,
+        targetManagedBy: "ca-B",
+      })
+    ).toBe(false);
+  });
+
+  it("Admin's view authority is unchanged (Customer only, same as manage)", () => {
+    expect(canViewLayer(ADMIN, CUSTOMER)).toBe(true);
+    expect(canViewLayer(ADMIN, ADMIN)).toBe(false);
+    expect(canViewLayer(ADMIN, SUPER_ADMIN)).toBe(false);
+  });
+
+  it("no one can view themselves through this path, same self-escalation guard as canManageTargetUser", () => {
+    expect(
+      canViewTargetUser({
+        actorUserId: "ca-1",
+        actorLayer: COMPANY_ADMIN,
+        isSuperAdmin: false,
+        targetUserId: "ca-1",
+        targetLayer: CUSTOMER,
+      })
+    ).toBe(false);
+  });
+
+  it("Super Admin can view anyone", () => {
+    expect(
+      canViewTargetUser({
+        actorUserId: "super-1",
+        actorLayer: SUPER_ADMIN,
+        isSuperAdmin: true,
+        targetUserId: "customer-1",
+        targetLayer: CUSTOMER,
+      })
+    ).toBe(true);
   });
 });
 

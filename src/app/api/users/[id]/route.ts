@@ -4,7 +4,7 @@ import { resolveCurrentAccess } from "@/lib/auth/current-user";
 import { requirePermission, requireAnyAdminAreaAccess } from "@/lib/permissions/guard";
 import { CORE_RESOURCES } from "@/lib/permissions/constants";
 import { userUpdateSchema } from "@/features/users/schemas/user-update.schema";
-import { updateUser, getUserForActor } from "@/services/user.service";
+import { updateUser, getUserForViewer } from "@/services/user.service";
 import { ok, handleRouteError } from "@/lib/api/response";
 import { parseObjectId } from "@/lib/validation/object-id";
 
@@ -19,7 +19,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 
     const { id: rawId } = await params;
     const id = parseObjectId(rawId);
-    const user = await getUserForActor(id, access);
+    const user = await getUserForViewer(id, access);
 
     return ok({ user });
   } catch (err) {

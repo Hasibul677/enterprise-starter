@@ -35,7 +35,7 @@ export const CREATABLE_LAYERS_BY: Record<UserLayer, UserLayer[]> = {
   [USER_LAYERS.CUSTOMER]: [],
 };
 
-/** Which layers a user belonging to `key` is allowed to VIEW/EDIT/DEACTIVATE an EXISTING user of (requirement #3/#10). */
+/** Which layers a user belonging to `key` is allowed to EDIT/DEACTIVATE (full manage authority) an EXISTING user of (requirement #3/#10). See VIEWABLE_TARGET_LAYERS_BY below for the broader read-only superset. */
 export const MANAGEABLE_TARGET_LAYERS_BY: Record<UserLayer, UserLayer[]> = {
   [USER_LAYERS.SUPER_ADMIN]: [
     USER_LAYERS.ADMIN,
@@ -45,6 +45,26 @@ export const MANAGEABLE_TARGET_LAYERS_BY: Record<UserLayer, UserLayer[]> = {
   ],
   [USER_LAYERS.ADMIN]: [USER_LAYERS.CUSTOMER],
   [USER_LAYERS.COMPANY_ADMIN]: [USER_LAYERS.MODERATOR],
+  [USER_LAYERS.MODERATOR]: [],
+  [USER_LAYERS.CUSTOMER]: [],
+};
+
+/**
+ * Which layers a user belonging to `key` is allowed to VIEW (list/read-only
+ * detail), a superset of MANAGEABLE_TARGET_LAYERS_BY. Today this only
+ * differs for COMPANY_ADMIN: it may view (but never edit/deactivate/
+ * reassign-role/grant-permissions/impersonate) CUSTOMER accounts, on top of
+ * its full MODERATOR management. Every other manage-affecting check (edit,
+ * delete, role assignment, permission overrides, impersonation) must keep
+ * using MANAGEABLE_TARGET_LAYERS_BY / canManageTargetUser() or the
+ * dedicated PERMISSION_GRANTERS / IMPERSONATION_TARGET_LAYERS_BY tables -
+ * never this one - so read-only access can never be leveraged into write
+ * access.
+ */
+export const VIEWABLE_TARGET_LAYERS_BY: Record<UserLayer, UserLayer[]> = {
+  [USER_LAYERS.SUPER_ADMIN]: MANAGEABLE_TARGET_LAYERS_BY[USER_LAYERS.SUPER_ADMIN],
+  [USER_LAYERS.ADMIN]: MANAGEABLE_TARGET_LAYERS_BY[USER_LAYERS.ADMIN],
+  [USER_LAYERS.COMPANY_ADMIN]: [USER_LAYERS.MODERATOR, USER_LAYERS.CUSTOMER],
   [USER_LAYERS.MODERATOR]: [],
   [USER_LAYERS.CUSTOMER]: [],
 };
@@ -71,9 +91,22 @@ export const GRANTABLE_RESOURCES_BY: Partial<Record<UserLayer, string[]>> = {
   ],
 };
 
-/** Which layers SUPER_ADMIN / COMPANY_ADMIN are each allowed to create a dynamic ROLE for (requirement #3/#4/#7). */
+/**
+ * Which layers SUPER_ADMIN / COMPANY_ADMIN are each allowed to create a
+ * dynamic ROLE for (requirement #3/#4/#7). SUPER_ADMIN may also create
+ * additional roles targeting its OWN layer - both the Role schema
+ * (role-create.schema.ts) and Mongoose model already allow `userLayer:
+ * "SUPER_ADMIN"`, and canManageRole()'s unconditional `isSuperAdmin` bypass
+ * already lets a Super Admin manage such a role once it exists; this table
+ * was the only remaining gate.
+ */
 export const CREATABLE_ROLE_LAYERS_BY: Partial<Record<UserLayer, UserLayer[]>> = {
-  [USER_LAYERS.SUPER_ADMIN]: [USER_LAYERS.ADMIN, USER_LAYERS.COMPANY_ADMIN, USER_LAYERS.CUSTOMER],
+  [USER_LAYERS.SUPER_ADMIN]: [
+    USER_LAYERS.SUPER_ADMIN,
+    USER_LAYERS.ADMIN,
+    USER_LAYERS.COMPANY_ADMIN,
+    USER_LAYERS.CUSTOMER,
+  ],
   [USER_LAYERS.COMPANY_ADMIN]: [USER_LAYERS.MODERATOR],
 };
 
@@ -136,12 +169,29 @@ export function canCreateUserInLayer(actorLayer: UserLayer, targetLayer: UserLay
 }
 
 /**
- * Requirement #3/#10: can a user belonging to `actorLayer` manage (view/
- * edit/deactivate) a user belonging to `targetLayer`?
+ * Requirement #3/#10: can a user belonging to `actorLayer` fully manage
+ * (edit/deactivate/reassign-role/grant-permissions) a user belonging to
+ * `targetLayer`? See canViewLayer() below for the broader read-only check -
+ * never substitute that one here, or read-only access silently becomes
+ * write access.
  */
 export function canManageLayer(actorLayer: UserLayer, targetLayer: UserLayer, isSuperAdmin = false): boolean {
   if (isSuperAdmin) return true;
   return MANAGEABLE_TARGET_LAYERS_BY[actorLayer]?.includes(targetLayer) ?? false;
+}
+
+/**
+ * Can a user belonging to `actorLayer` VIEW (list / read-only detail) a user
+ * belonging to `targetLayer`? A superset of canManageLayer() - e.g.
+ * COMPANY_ADMIN can view CUSTOMER accounts without being able to manage
+ * them. Use this ONLY for read paths (list scoping, detail GET); every
+ * write path (edit, delete, role assignment, permission overrides,
+ * impersonation) must keep using canManageLayer()/canManageTargetUser() or
+ * their own dedicated tables.
+ */
+export function canViewLayer(actorLayer: UserLayer, targetLayer: UserLayer, isSuperAdmin = false): boolean {
+  if (isSuperAdmin) return true;
+  return VIEWABLE_TARGET_LAYERS_BY[actorLayer]?.includes(targetLayer) ?? false;
 }
 
 /**
@@ -161,6 +211,32 @@ export function canManageTargetUser(params: {
   if (isSuperAdmin) return true;
   if (actorUserId === targetUserId) return false; // never manage yourself through this path
   if (!canManageLayer(actorLayer, targetLayer)) return false;
+
+  if (actorLayer === USER_LAYERS.COMPANY_ADMIN && targetLayer === USER_LAYERS.MODERATOR) {
+    return targetManagedBy === actorUserId;
+  }
+  return true;
+}
+
+/**
+ * Read-only counterpart to canManageTargetUser() - layer-hierarchy VIEW
+ * authority (canViewLayer(), a superset of canManageLayer()) plus the same
+ * COMPANY_ADMIN -> MODERATOR ownership rule. Used ONLY to gate read paths
+ * (list scoping, detail GET) - never for edit/delete/role/permission/
+ * impersonation authority, which must keep calling canManageTargetUser().
+ */
+export function canViewTargetUser(params: {
+  actorUserId: string;
+  actorLayer: UserLayer;
+  isSuperAdmin: boolean;
+  targetUserId: string;
+  targetLayer: UserLayer;
+  targetManagedBy?: string | null;
+}): boolean {
+  const { actorUserId, actorLayer, isSuperAdmin, targetUserId, targetLayer, targetManagedBy } = params;
+  if (isSuperAdmin) return true;
+  if (actorUserId === targetUserId) return false; // never manage yourself through this path
+  if (!canViewLayer(actorLayer, targetLayer)) return false;
 
   if (actorLayer === USER_LAYERS.COMPANY_ADMIN && targetLayer === USER_LAYERS.MODERATOR) {
     return targetManagedBy === actorUserId;

@@ -55,11 +55,11 @@ export function Dialog({ open, onClose, title, description, children, footer, pr
             exit={{ opacity: 0, y: 8, scale: 0.98 }}
             transition={{ duration: 0.15 }}
             className={cn(
-              "relative z-10 w-full max-w-md rounded-lg border border-line bg-surface p-5 shadow-xl",
+              "relative z-10 flex max-h-[95vh] w-full max-w-md flex-col rounded-lg border border-line bg-surface shadow-xl",
               className
             )}
           >
-            <div className="mb-4 flex items-start justify-between">
+            <div className="flex shrink-0 items-start justify-between gap-4 p-5 pb-4">
               <div>
                 <h2 id="dialog-title" className="text-base font-semibold text-ink">
                   {title}
@@ -72,8 +72,8 @@ export function Dialog({ open, onClose, title, description, children, footer, pr
                 </IconButton>
               )}
             </div>
-            <div>{children}</div>
-            {footer && <div className="mt-5 flex justify-end gap-2">{footer}</div>}
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
+            {footer && <div className="flex shrink-0 justify-end gap-2 border-t border-line p-5">{footer}</div>}
           </motion.div>
         </div>
       )}

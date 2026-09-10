@@ -17,14 +17,23 @@ export const userRepository = {
   },
 
   async list(params: { page: number; limit: number; search?: string; scopeFilter?: Record<string, unknown> }) {
-    const filter: Record<string, unknown> = { ...(params.scopeFilter ?? {}) };
+    // Combined via $and rather than spreading scopeFilter and then
+    // assigning filter.$or directly - scopeFilter may itself use $or (e.g.
+    // a COMPANY_ADMIN's combined "own moderators OR any customer" scope),
+    // and a plain assignment would silently clobber it, letting a search
+    // query bypass the actor's scope entirely.
+    const conditions: Record<string, unknown>[] = [];
+    if (params.scopeFilter) conditions.push(params.scopeFilter);
     if (params.search) {
-      filter.$or = [
-        { firstName: { $regex: params.search, $options: "i" } },
-        { lastName: { $regex: params.search, $options: "i" } },
-        { email: { $regex: params.search, $options: "i" } },
-      ];
+      conditions.push({
+        $or: [
+          { firstName: { $regex: params.search, $options: "i" } },
+          { lastName: { $regex: params.search, $options: "i" } },
+          { email: { $regex: params.search, $options: "i" } },
+        ],
+      });
     }
+    const filter: Record<string, unknown> = conditions.length > 0 ? { $and: conditions } : {};
     const skip = (params.page - 1) * params.limit;
     const [items, total] = await Promise.all([
       UserModel.find(filter).populate("roles").sort({ createdAt: -1 }).skip(skip).limit(params.limit).lean().exec(),

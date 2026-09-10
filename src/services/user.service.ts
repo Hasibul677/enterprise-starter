@@ -4,7 +4,13 @@ import { auditLogRepository } from "@/repositories/audit-log.repository";
 import { hashPassword, isPasswordStrongEnough } from "@/lib/security/password";
 import { ValidationError, NotFoundError, ConflictError, AuthorizationError } from "@/lib/errors/app-error";
 import { USER_LAYERS } from "@/lib/permissions/constants";
-import { canCreateUserInLayer, canGrantPermissionOverride, canManageTargetUser, MANAGEABLE_TARGET_LAYERS_BY } from "@/lib/permissions/role-hierarchy";
+import {
+  canCreateUserInLayer,
+  canGrantPermissionOverride,
+  canManageTargetUser,
+  canViewTargetUser,
+  VIEWABLE_TARGET_LAYERS_BY,
+} from "@/lib/permissions/role-hierarchy";
 import type { ResolvedAccess } from "@/lib/auth/current-user";
 import type { UserCreateInput } from "@/features/users/schemas/user-create.schema";
 import type { UserUpdateInput } from "@/features/users/schemas/user-update.schema";
@@ -75,27 +81,41 @@ function assertRolesAssignableByActor(roles: RoleDocument[], access: ResolvedAcc
 function buildUserListScopeFilter(access: ResolvedAccess): Record<string, unknown> {
   if (access.isSuperAdmin) return {};
 
-  const manageableLayers = MANAGEABLE_TARGET_LAYERS_BY[access.userLayer] ?? [];
-  if (manageableLayers.length === 0) {
-    return { _id: { $in: [] } }; // no manageable layers - matches nothing
+  const viewableLayers = VIEWABLE_TARGET_LAYERS_BY[access.userLayer] ?? [];
+  if (viewableLayers.length === 0) {
+    return { _id: { $in: [] } }; // no viewable layers - matches nothing
   }
 
-  const filter: Record<string, unknown> = { userLayer: { $in: manageableLayers } };
-
-  // COMPANY_ADMIN only ever manages its OWN moderators (requirement #10) -
-  // ADMIN has no equivalent ownership restriction over CUSTOMER accounts.
+  // COMPANY_ADMIN only ever manages its OWN moderators (requirement #10),
+  // but VIEWS every CUSTOMER unrestricted (same as ADMIN's unrestricted
+  // CUSTOMER access) - so the ownership scope applies to the MODERATOR
+  // layer alone, never blanket across every layer the actor can view.
   if (access.userLayer === USER_LAYERS.COMPANY_ADMIN) {
-    filter.managedBy = String(access.user._id);
+    const actorId = String(access.user._id);
+    const unownedLayers = viewableLayers.filter((l) => l !== USER_LAYERS.MODERATOR);
+    return {
+      $or: [
+        { userLayer: USER_LAYERS.MODERATOR, managedBy: actorId },
+        ...(unownedLayers.length > 0 ? [{ userLayer: { $in: unownedLayers } }] : []),
+      ],
+    };
   }
 
-  return filter;
+  return { userLayer: { $in: viewableLayers } };
 }
 
 /**
- * Fetches a single user for an admin-area/company-admin-area viewer,
- * enforcing the same target-management authority as updateUser() so a
- * COMPANY_ADMIN (etc.) can't read another actor's users by guessing an id
- * even though the list endpoint already scopes correctly (requirement #10).
+ * Fetches a single user with full MANAGE authority (canManageTargetUser()) -
+ * i.e. the actor could also edit/deactivate/reassign-role/grant-permissions
+ * for this exact user, not merely view them. Used wherever a target user is
+ * fetched as a prerequisite to a write-adjacent read (e.g. the permission-
+ * overrides GET, which reveals grantable state) so a COMPANY_ADMIN (etc.)
+ * can't read another actor's users by guessing an id, even though the list
+ * endpoint already scopes correctly (requirement #10). For a PURE read-only
+ * detail view where view-only access is intentionally broader than manage
+ * access (e.g. COMPANY_ADMIN viewing a CUSTOMER), use getUserForViewer()
+ * instead - never relax the check here, or a read-only surface silently
+ * gains write authority too.
  */
 export async function getUserForActor(userId: string, access: ResolvedAccess) {
   const target = await userRepository.findById(userId);
@@ -105,6 +125,38 @@ export async function getUserForActor(userId: string, access: ResolvedAccess) {
     const authorized =
       String(access.user._id) === userId ||
       canManageTargetUser({
+        actorUserId: String(access.user._id),
+        actorLayer: access.userLayer,
+        isSuperAdmin: access.isSuperAdmin,
+        targetUserId: userId,
+        targetLayer: target.userLayer as UserLayer,
+        targetManagedBy: target.managedBy ? String(target.managedBy) : null,
+      });
+    if (!authorized) {
+      throw new AuthorizationError("You do not have authority to view this user.");
+    }
+  }
+
+  return target;
+}
+
+/**
+ * Fetches a single user with VIEW-ONLY authority (canViewTargetUser()) - a
+ * superset of getUserForActor()'s manage authority, e.g. it also lets a
+ * COMPANY_ADMIN look at (but not edit/deactivate/reassign-role/grant-
+ * permissions/impersonate) its CUSTOMER accounts. Used ONLY by the plain
+ * GET /api/users/[id] detail route; every write-adjacent read (permission
+ * overrides, etc.) must keep using getUserForActor() above so read-only
+ * access can never be leveraged into write access.
+ */
+export async function getUserForViewer(userId: string, access: ResolvedAccess) {
+  const target = await userRepository.findById(userId);
+  if (!target) throw new NotFoundError("User not found.");
+
+  if (!access.isSuperAdmin) {
+    const authorized =
+      String(access.user._id) === userId ||
+      canViewTargetUser({
         actorUserId: String(access.user._id),
         actorLayer: access.userLayer,
         isSuperAdmin: access.isSuperAdmin,
@@ -133,7 +185,9 @@ export async function adminCreateUser(input: UserCreateInput, access: ResolvedAc
 
   const roles = await roleRepository.findByIds(input.roleIds);
   if (roles.length !== input.roleIds.length) {
-    throw new ValidationError("One or more role IDs are invalid.", [{ field: "roleIds", message: "Invalid role reference." }]);
+    throw new ValidationError("One or more role IDs are invalid.", [
+      { field: "roleIds", message: "Invalid role reference." },
+    ]);
   }
   assertRolesActive(roles);
 
@@ -215,7 +269,9 @@ export async function updateUser(userId: string, input: UserUpdateInput, access:
   if (input.roleIds) {
     const roles = await roleRepository.findByIds(input.roleIds);
     if (roles.length !== input.roleIds.length) {
-      throw new ValidationError("One or more role IDs are invalid.", [{ field: "roleIds", message: "Invalid role reference." }]);
+      throw new ValidationError("One or more role IDs are invalid.", [
+        { field: "roleIds", message: "Invalid role reference." },
+      ]);
     }
     assertRolesActive(roles);
 
@@ -224,7 +280,10 @@ export async function updateUser(userId: string, input: UserUpdateInput, access:
     const newLayer = resolveRolesLayer(roles as unknown as { userLayer: UserLayer }[]);
     if (newLayer !== targetLayer) {
       throw new ValidationError(`Roles must target this user's '${targetLayer}' layer.`, [
-        { field: "roleIds", message: `This user belongs to the '${targetLayer}' layer and cannot be reassigned to a different one.` },
+        {
+          field: "roleIds",
+          message: `This user belongs to the '${targetLayer}' layer and cannot be reassigned to a different one.`,
+        },
       ]);
     }
     assertRolesAssignableByActor(roles, access);
@@ -243,7 +302,8 @@ export async function updateUser(userId: string, input: UserUpdateInput, access:
   // If status is changing to BLOCKED/DISABLED, or roles changed, bump
   // tokenVersion so any currently-outstanding access token is immediately
   // invalidated (see requirement #16/#57 - no stale authorization caching).
-  const statusBecameRestrictive = input.status && input.status !== previousStatus && (input.status === "BLOCKED" || input.status === "DISABLED");
+  const statusBecameRestrictive =
+    input.status && input.status !== previousStatus && (input.status === "BLOCKED" || input.status === "DISABLED");
   if (statusBecameRestrictive || input.roleIds) {
     await userRepository.incrementTokenVersion(userId);
   }
@@ -300,7 +360,11 @@ export async function updateUser(userId: string, input: UserUpdateInput, access:
  * this is where privilege escalation is actually prevented, not just at the
  * route boundary.
  */
-export async function setUserPermissionOverrides(targetUserId: string, overrides: PermissionMap, access: ResolvedAccess) {
+export async function setUserPermissionOverrides(
+  targetUserId: string,
+  overrides: PermissionMap,
+  access: ResolvedAccess
+) {
   const target = await userRepository.findById(targetUserId);
   if (!target) throw new NotFoundError("User not found.");
 
@@ -341,7 +405,10 @@ export async function setUserPermissionOverrides(targetUserId: string, overrides
     }
   }
 
-  const updated = await userRepository.updatePermissionOverrides(targetUserId, overrides as Record<string, Record<string, boolean>>);
+  const updated = await userRepository.updatePermissionOverrides(
+    targetUserId,
+    overrides as Record<string, Record<string, boolean>>
+  );
   // Takes effect immediately, same as a role change (see updateUser above).
   await userRepository.incrementTokenVersion(targetUserId);
   await userRepository.incrementPermissionVersion(targetUserId);
@@ -365,7 +432,7 @@ export async function setUserPermissionOverrides(targetUserId: string, overrides
  */
 function isLayerVisibleToActor(layer: UserLayer, access: ResolvedAccess): boolean {
   if (access.isSuperAdmin) return true;
-  return (MANAGEABLE_TARGET_LAYERS_BY[access.userLayer] ?? []).includes(layer);
+  return (VIEWABLE_TARGET_LAYERS_BY[access.userLayer] ?? []).includes(layer);
 }
 
 export async function listUsers(
